@@ -15,6 +15,7 @@ import { captionsToSrt, captionsToTxt } from '../captions/exportCaptions';
 import { exportClipMov, renderClipMovBlob } from '../media/clipExport';
 import { sanitizeFileName } from '../media/fileName';
 import { motionGraphicRenderFilename, motionGraphicRenderKey } from './motionGraphicRefs';
+import { hasPendingUpload, PENDING_UPLOAD_EXPORT_MESSAGE } from './pendingUploads';
 import { recordExport } from '../persist/exportHistoryStore';
 
 import { exportVideoWithFallback, isAbortError, renderTimelineInBrowser } from './browserExport';
@@ -487,6 +488,10 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
   const run = async () => {
     if (busy) return;
     if (progress?.phase === 'completed') { onClose(); return; }
+    if (hasPendingUpload(state.items)) {
+      setError(PENDING_UPLOAD_EXPORT_MESSAGE);
+      return;
+    }
     setError(null);
     setQa(null);
     const startedAt = Date.now();
