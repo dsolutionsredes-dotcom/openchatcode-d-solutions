@@ -3,13 +3,16 @@ FROM node:24-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/data \
     MEDIA_DIR=/data/media \
-    CC_BROWSER_EXECUTABLE=/usr/bin/chromium
+    CC_BROWSER_EXECUTABLE=/usr/bin/chromium \
+    OPENCHATCUT_FFMPEG=/usr/bin/ffmpeg \
+    OPENCHATCUT_FFPROBE=/usr/bin/ffprobe
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         chromium \
         curl \
+        ffmpeg \
         fonts-liberation \
         libasound2 \
         libatk-bridge2.0-0 \
