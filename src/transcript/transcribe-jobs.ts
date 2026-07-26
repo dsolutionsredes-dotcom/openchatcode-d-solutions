@@ -23,7 +23,7 @@ export interface TranscribeJob {
 const jobs = new Map<string, TranscribeJob>();
 
 const POLL_MS = 1000;
-const DEFAULT_LANG = 'zh';
+const DEFAULT_LANG = 'es';
 
 interface EnqueueOptions {
   languageCode?: string;
