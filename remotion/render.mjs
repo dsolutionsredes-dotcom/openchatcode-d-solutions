@@ -201,7 +201,7 @@ export async function renderTimeline({ state, outputLocation, onProgress, codec 
     scale: scale && Number.isFinite(scale) && scale > 0 ? scale : 1,
     // GLSL transitions need WebGL2 in headless Chrome; 'angle' uses the native
     // GPU backend (Metal on macOS). Swap to 'swangle' (SwiftShader) on servers.
-    chromiumOptions: { gl: 'angle' },
+    chromiumOptions: { gl: 'swangle' },
     browserExecutable: browserExecutable(),
     onProgress: onProgress ? ({ progress }) => onProgress(progress) : undefined,
   });
@@ -240,7 +240,7 @@ export async function renderClip({ state, outputLocation, codec = 'vp8', transpa
     ...(transparent && codec === 'prores'
       ? { proResProfile: '4444', imageFormat: 'png', pixelFormat: 'yuva444p10le' }
       : {}),
-    chromiumOptions: { gl: 'angle' },
+    chromiumOptions: { gl: 'swangle' },
     browserExecutable: browserExecutable(),
   });
   return outputLocation;
@@ -269,7 +269,7 @@ export async function renderTimelineStills({ state, frames, puppeteerInstance })
   const ownBrowser = !puppeteerInstance;
   const browser = puppeteerInstance ?? await openBrowser('chrome', {
     browserExecutable: browserExecutable(),
-    chromiumOptions: { gl: 'angle' },
+    chromiumOptions: { gl: 'swangle' },
   });
   try {
     const composition = await selectComposition({
@@ -286,7 +286,7 @@ export async function renderTimelineStills({ state, frames, puppeteerInstance })
         imageFormat: 'jpeg', jpegQuality: 72,
         // Slightly smaller cells when many frames → cheaper vision payload
         scale: (list.length > 6 ? 480 : 640) / composition.width,
-        chromiumOptions: { gl: 'angle' },
+        chromiumOptions: { gl: 'swangle' },
         browserExecutable: browserExecutable(),
         offthreadVideoThreads: offthreadVideoThreads(),
         output: null,
