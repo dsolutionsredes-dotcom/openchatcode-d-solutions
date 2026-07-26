@@ -50,7 +50,7 @@ async function uploadBlob(blob: Blob): Promise<string> {
 
 export interface TranscribeOptions {
   /**
-   * ISO-639-1. Default `zh` for this product (中文口播).
+   * ISO-639-1. Default `es` for this product (Spanish speech).
    * Pass `auto` to use AssemblyAI language_detection instead.
    */
   languageCode?: string | 'auto';
@@ -69,11 +69,11 @@ async function createTranscript(audioUrl: string, opts: TranscribeOptions = {}):
     punctuate: true,
     format_text: true,
   };
-  const lang = opts.languageCode ?? 'zh';
+  const lang = opts.languageCode ?? 'es';
   if (lang === 'auto') {
     body.language_detection = true;
   } else {
-    // Explicit zh is far more reliable for 中文纪录片口播 than pure auto-detect.
+    // An explicit language is more reliable than pure auto-detect for the default flow.
     body.language_code = lang;
   }
   const r = await serviceFetch(`${BASE}/transcript`, {
