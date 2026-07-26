@@ -3,7 +3,7 @@ FROM node:24-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/data \
     MEDIA_DIR=/data/media \
-    REMOTION_CHROME_EXECUTABLE=/usr/bin/chromium
+    CC_BROWSER_EXECUTABLE=/usr/bin/chromium
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
