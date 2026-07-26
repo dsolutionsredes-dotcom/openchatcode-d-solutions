@@ -133,29 +133,11 @@ export function BrandMark({ size = 16 }: { size?: number }) {
   );
 }
 
-/** OpenChatCut 文字标：OPEN 反白徽章 + Chat Cut 实心字标。 */
+/** Marca visible de la aplicación. */
 export function OpenChatCutWordmark({ width = 126 }: { width?: number }) {
   return (
-    <svg
-      aria-label="OpenChatCut"
-      role="img"
-      width={width}
-      height={width / 4}
-      viewBox="0 0 504 126"
-      style={{ display: 'block', flexShrink: 0 }}
-    >
-      <rect x="0" y="13" width="166" height="92" rx="14" fill="currentColor" />
-      <text
-        fontFamily="Inter, system-ui, sans-serif"
-        dominantBaseline="alphabetic"
-      >
-        <tspan x="83" y="82" textAnchor="middle" fill="var(--cc-panel)" fontSize="58" fontWeight="850" letterSpacing="-0.045em">
-          OPEN
-        </tspan>
-        <tspan x="188" y="79" fill="currentColor" fontSize="62" fontWeight="720" letterSpacing="-0.045em">
-          Chat Cut
-        </tspan>
-      </text>
-    </svg>
+    <span aria-label="OpenChatCode D-Solutions" role="img" style={{ display: 'block', flexShrink: 0, whiteSpace: 'nowrap', fontSize: Math.max(11, width / 8), fontWeight: 760, letterSpacing: '-0.035em' }}>
+      OpenChatCode <span style={{ fontWeight: 600 }}>D-Solutions</span>
+    </span>
   );
 }
