@@ -211,7 +211,7 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
     return (
       <aside style={{ gridColumn: 1, gridRow: '2 / 5', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '10px 0', borderRight: `0.5px solid ${theme.border}`, background: theme.panel }}>
         <button onClick={onToggleCollapse} title={t('展开 OpenChatCut Agent')} style={{ background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', fontSize: 14 }}><span style={{ transform: 'rotate(-90deg)', display: 'inline-flex' }}><Icon name="chevronDown" size={14} /></span></button>
-        <div className="cc-chat-collapsed-brand">OpenChatCut</div>
+        <div className="cc-chat-collapsed-brand">OpenChatCode D-Solutions</div>
       </aside>
     );
   }
