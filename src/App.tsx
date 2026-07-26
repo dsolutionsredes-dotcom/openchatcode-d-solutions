@@ -14,7 +14,7 @@ import { useT } from './i18n/locale';
 
 const Editor = lazy(() => import('./Editor'));
 
-// A brand-new project starts empty; the first-run "示例工程" gets the seed clips.
+// A brand-new project starts empty; the first-run "Proyecto de ejemplo" gets the seed clips.
 const emptyState = (): TimelineState => ({
   fps: 30,
   width: 1920,
@@ -89,7 +89,7 @@ export default function App() {
     (async () => {
       let list = await listProjects();
       if (list.length === 0 && !(await hasProjectHistory())) {
-        list = [await createProject('示例工程', await seedDoc())];
+        list = [await createProject('Proyecto de ejemplo', await seedDoc())];
       }
       setProjects(list);
     })();
