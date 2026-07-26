@@ -6,17 +6,21 @@
 import { useSyncExternalStore } from 'react';
 import { EN } from './dict/en';
 import EN_DATA from './dict/en/templates-data';
-import { ZH_DATA } from './dict/zh';
+import { ES } from './dict/es';
+import ES_DATA from './dict/es/templates-data';
 
-export type Locale = 'zh' | 'en';
+export type Locale = 'es' | 'en';
 
 const STORAGE_KEY = 'cc.locale';
 
 function readInitial(): Locale {
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'en' ? 'en' : 'zh';
+    const saved = localStorage.getItem(STORAGE_KEY);
+    // Migrate the former Chinese setting to the new default.
+    if (saved === 'zh') localStorage.setItem(STORAGE_KEY, 'es');
+    return saved === 'en' ? 'en' : 'es';
   } catch {
-    return 'zh';
+    return 'es';
   }
 }
 
@@ -33,13 +37,13 @@ export function setLocale(next: Locale): void {
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch { /* 私隐模式等存不了就只影响本次会话 */ }
-  document.documentElement.lang = next === 'en' ? 'en' : 'zh-CN';
+  document.documentElement.lang = next === 'en' ? 'en' : 'es';
   subscribers.forEach((notify) => notify());
 }
 
 /** t('已选 {n}', { n: 3 }) —— 中文原文即键;占位符 {name} 两种语言同名。 */
 export function t(zh: string, params?: Record<string, string | number>): string {
-  const raw = current === 'en' ? (EN[zh] ?? zh) : zh;
+  const raw = current === 'en' ? (EN[zh] ?? zh) : (ES[zh] ?? zh);
   if (!params) return raw;
   return raw.replace(/\{(\w+)\}/g, (match, key: string) => (key in params ? String(params[key]) : match));
 }
@@ -48,7 +52,7 @@ export function t(zh: string, params?: Record<string, string | number>): string 
  * 英文键数据(内置 211 条)zh 态走 ZH_DATA;中文键数据(自制包)en 态走 EN_DATA。
  * 只用于展示,不改数据本身(名字同时是引用键)。 */
 export function tData(text: string): string {
-  return current === 'zh' ? (ZH_DATA[text] ?? text) : (EN_DATA[text] ?? text);
+  return current === 'en' ? (EN_DATA[text] ?? text) : (ES_DATA[text] ?? text);
 }
 
 /** 组件内取 t:订阅语言切换,切换时触发本组件重渲。 */
