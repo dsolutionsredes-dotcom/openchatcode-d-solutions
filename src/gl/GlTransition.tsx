@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { AbsoluteFill, Img, Video, continueRender, delayRender, useCurrentFrame, useVideoConfig } from 'remotion';
 import { createGlRuntime, type GlRuntime } from './runtime';
 import { GLSL_TRANSITIONS } from './transitions';
+import { composeTimelineItemFrame } from './composeTimelineItemFrame';
 import type { AspectFit, GlslTransitionType, TimelineItem, TransitionDirection } from '../editor/types';
 
 // One GLSL transition window straddling the cut from R to R+L. Mounts
@@ -38,21 +39,6 @@ type MediaEl = HTMLVideoElement | HTMLImageElement;
 
 const isReady = (el: MediaEl): boolean =>
   el instanceof HTMLVideoElement ? el.readyState >= 2 && !el.seeking : el.complete;
-
-// draw a media element into the staging canvas with contain/cover placement
-// (same math as MediaFill's objectFit, so GL frames match the DOM rendering).
-function drawFit(ctx: CanvasRenderingContext2D, el: MediaEl, fit: AspectFit): void {
-  const W = ctx.canvas.width;
-  const H = ctx.canvas.height;
-  const nw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
-  const nh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
-  ctx.clearRect(0, 0, W, H);
-  if (!nw || !nh) return;
-  const scale = fit === 'cover' ? Math.max(W / nw, H / nh) : Math.min(W / nw, H / nh);
-  const dw = nw * scale;
-  const dh = nh * scale;
-  ctx.drawImage(el, (W - dw) / 2, (H - dh) / 2, dw, dh);
-}
 
 function MediaSource({ item, trim, elRef }: { item: TimelineItem; trim: number; elRef: React.MutableRefObject<MediaEl | null> }) {
   if (item.kind === 'image') {
@@ -114,8 +100,8 @@ export function GlTransition({ type, direction, L, windowStart, outgoing, incomi
         if (!runtimeRef.current) runtimeRef.current = createGlRuntime(canvas);
         const octx = staging.out.getContext('2d')!;
         const ictx = staging.in.getContext('2d')!;
-        drawFit(octx, o, fit);
-        drawFit(ictx, i, fit);
+        composeTimelineItemFrame(octx, o, outgoing, fit, windowStart + frame);
+        composeTimelineItemFrame(ictx, i, incoming, fit, windowStart + frame);
         const progress = L > 0 ? frame / L : 1;
         const time = (windowStart + frame) / fps;
         runtimeRef.current.render(def.frag, staging.out, staging.in, progress, def.uniforms({ time, aspect: width / Math.max(1, height), direction }));
@@ -132,7 +118,7 @@ export function GlTransition({ type, direction, L, windowStart, outgoing, incomi
       cancelAnimationFrame(raf);
       finish();
     };
-  }, [frame, fps, L, windowStart, fit, type, direction, def, staging, width, height]);
+  }, [frame, fps, L, windowStart, fit, type, direction, def, staging, width, height, outgoing, incoming]);
 
   useEffect(() => () => {
     runtimeRef.current?.dispose();
