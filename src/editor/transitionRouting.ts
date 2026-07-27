@@ -8,16 +8,12 @@ export type VisualTransitionRoute =
   | { renderer: 'css'; type: CssTransitionType };
 
 /**
- * GlTransition renders fresh source textures, bypassing ClipWrapper. Any of these
- * properties therefore requires the DOM/CSS path so crop, reframe, zoom and FX
- * continue to be applied to both sides of the transition.
+ * The staging compositor handles transform, zoom/reframe and keyframes. Effects
+ * and filters still need the DOM path until their visual passes are rasterized too.
  */
 export function needsClipWrapperTransition(item: TransitionClip | undefined): boolean {
   return !!item && (
-    item.transform !== undefined
-    || item.zoom !== undefined
-    || item.keyframes !== undefined
-    || item.filters !== undefined
+    item.filters !== undefined
     || item.effects !== undefined
   );
 }
@@ -26,7 +22,7 @@ function isTexturable(item: TransitionClip | undefined): boolean {
   return !!item && isRasterMediaKind(item.kind) && item.kind !== 'svg' && item.kind !== 'gif';
 }
 
-/** Choose GL only when both clips can be rendered without losing ClipWrapper state. */
+/** Raster media with supported framing state stays on the real GLSL path. */
 export function routeVisualTransition(
   type: string,
   outgoing: TransitionClip | undefined,
