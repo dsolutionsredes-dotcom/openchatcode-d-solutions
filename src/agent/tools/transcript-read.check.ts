@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { AgentContext } from '../context';
 import type { TimelineState } from '../../editor/types';
 import { execReadTranscript } from './transcript-read';
+import './transcript-language.verify';
 
 const state: TimelineState = {
   fps: 30,

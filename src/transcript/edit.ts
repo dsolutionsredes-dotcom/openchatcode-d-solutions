@@ -288,6 +288,25 @@ export function fillerIndices(words: TranscriptWord[]): number[] {
   return idxs;
 }
 
+/** Merge an inclusive consecutive range without changing any timing fields. */
+export function mergeTranscriptWords(
+  words: TranscriptWord[],
+  startIndex: number,
+  endIndex: number,
+  text: string,
+): TranscriptWord[] {
+  if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex) || startIndex < 0 || endIndex < startIndex || endIndex >= words.length) {
+    throw new RangeError('merge word range is invalid');
+  }
+  const first = words[startIndex]!;
+  const last = words[endIndex]!;
+  return [
+    ...words.slice(0, startIndex),
+    { ...first, text, start: first.start, end: last.end },
+    ...words.slice(endIndex + 1),
+  ];
+}
+
 // ── video 件的字幕投影:媒体帧窗口直投(2026-07-17,长转短 e2e 抓获)─────────
 // audio 与 video 的 srcInFrame 语义不同:audio 的窗口切在"编辑后词流"上
 // (播放层渲 keptSegments,删词=剪音频);video 则**永远连续播放**媒体

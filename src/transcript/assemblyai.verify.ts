@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadTranscriptionSource, transcribeBlob, TranscriptionError } from './assemblyai';
 import { putMediaBlob, resetMediaBlobMemory } from '../persist/mediaBlobStore';
+import { mergeTranscriptWords } from './edit';
 
 const originalFetch = globalThis.fetch;
 
@@ -35,6 +36,21 @@ try {
   assert.equal(submitted[0].language_detection, undefined);
   assert.equal(submitted[1].language_detection, true, 'auto remains available when requested explicitly');
   assert.equal(submitted[1].language_code, undefined);
+
+  assert.deepEqual(mergeTranscriptWords([
+    { text: 'Va', start: 10, end: 100 },
+    { text: 'len', start: 100, end: 200 },
+    { text: 'tina', start: 200, end: 300 },
+    { text: 'yendo', start: 400, end: 500 },
+  ], 0, 2, 'Valentina'), [
+    { text: 'Valentina', start: 10, end: 300 },
+    { text: 'yendo', start: 400, end: 500 },
+  ]);
+  assert.deepEqual(mergeTranscriptWords([
+    { text: 'vá', start: 10, end: 100 },
+    { text: 'mo', start: 100, end: 200 },
+    { text: 'nos', start: 200, end: 300 },
+  ], 0, 2, 'vámonos'), [{ text: 'vámonos', start: 10, end: 300 }]);
 } finally {
   globalThis.fetch = originalFetch;
   resetMediaBlobMemory();

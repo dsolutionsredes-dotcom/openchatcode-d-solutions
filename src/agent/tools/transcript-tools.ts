@@ -2,7 +2,7 @@ import type { AgentToolSchema } from '../tool-schema';
 import type { AgentContext } from '../context';
 import { defaultTrackId, resolveTrackId, trackAlias, type TimelineItem, type TrackId } from '../../editor/types';
 import { transcribePath } from '../../transcript/assemblyai';
-import { fillerIndices } from '../../transcript/edit';
+import { fillerIndices, mergeTranscriptWords } from '../../transcript/edit';
 import { translateLines } from '../../captions/translate';
 import { createVariant, findVariantByLang, upsertVariant } from '../../transcript/variants';
 import { buildSilenceGapCaps, parseCleanOnly, parseSilenceRule, type SilenceRule } from '../../transcript/clean';
@@ -33,7 +33,7 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
   {
     name: 'transcribe_track',
     description: 'Transcribe the audio clip on a track (word-level + speaker labels, via AssemblyAI) and attach the transcript. Required before find_transcript / clean_script / delete_text / captions when the clip has no transcript yet.',
-    input_schema: { type: 'object', properties: { track: { type: 'string', description: 'Track alias or stable id whose audio to transcribe (default A1).' } } },
+    input_schema: { type: 'object', properties: { track: { type: 'string', description: 'Track alias or stable id whose audio to transcribe (default A1).' }, languageCode: { type: 'string', description: 'Optional AssemblyAI language code; defaults to es.' } } },
   },
   {
     name: 'find_transcript',
@@ -123,12 +123,14 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
     input_schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['fix', 'retry_transcription', 'translation_create', 'translation_ensure', 'translation_list', 'translation_read'], description: '见描述:改错字/说话人、重转、建/保证/列/读译文变体。' },
+        action: { type: 'string', enum: ['fix', 'merge_words', 'retry_transcription', 'translation_create', 'translation_ensure', 'translation_list', 'translation_read'], description: 'Includes merge_words for combining consecutive transcript tokens without changing timing.' },
         itemId: { type: 'string', description: '目标 clip 的 item id;省略则取该 track 上第一个带转写的音/视频 clip。' },
         track: { type: 'string', description: 'itemId 省略时,用 track 别名/稳定 id 定位(默认 A1)。' },
         wordIndex: { type: 'number', description: 'fix 改错字:要修正的词下标(与 find 二选一)。' },
         find: { type: 'string', description: 'fix 改错字:错词原文,精确匹配一个词(与 wordIndex 二选一)。' },
         text: { type: 'string', description: 'fix 改错字:修正后的正确文本。' },
+        startIndex: { type: 'integer', description: 'merge_words inclusive first token index.' },
+        endIndex: { type: 'integer', description: 'merge_words inclusive last token index.' },
         from: { type: 'string', description: 'fix 改说话人:要重命名的现有说话人标签(如 "A"/"B")。' },
         to: { type: 'string', description: 'fix 改说话人:新显示名;传一个已存在的标签即合并两位说话人(如 "B"→"A")。' },
         lang: { type: 'string', description: 'translation_create/ensure:目标语言(如 "English"/"中文"/"日本語");translation_read:要读的变体语言。' },
@@ -242,7 +244,8 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
   if (action === 'retry_transcription') {
     if (!it.src) return { error: `item ${it.id} has no media to transcribe` };
     try {
-      const r = await transcribePath(it.src, undefined, { languageCode: 'zh' });
+      const languageCode = typeof args.languageCode === 'string' && args.languageCode.trim() ? args.languageCode.trim() : 'es';
+      const r = await transcribePath(it.src, undefined, { languageCode });
       ctx.commands.setItemTranscript(it.id, r.words);
       return { ok: true, action, itemId: it.id, words: r.words.length, text: r.text.slice(0, 200), retried: true };
     } catch (e) {
@@ -251,6 +254,19 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
   }
 
   if (!it.transcript?.length) return { error: `item ${it.id} has no transcript; call transcribe_track first` };
+
+  if (action === 'merge_words') {
+    const startIndex = typeof args.startIndex === 'number' && Number.isInteger(args.startIndex) ? args.startIndex : NaN;
+    const endIndex = typeof args.endIndex === 'number' && Number.isInteger(args.endIndex) ? args.endIndex : NaN;
+    const text = typeof args.text === 'string' ? args.text.trim() : '';
+    if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex) || startIndex < 0 || endIndex < startIndex || endIndex >= it.transcript.length) {
+      return { error: `merge_words needs a valid inclusive range startIndex..endIndex within 0..${it.transcript.length - 1}` };
+    }
+    if (!text) return { error: 'merge_words needs non-empty text' };
+    const merged = mergeTranscriptWords(it.transcript, startIndex, endIndex, text);
+    ctx.commands.setItemTranscript(it.id, merged);
+    return { ok: true, action, itemId: it.id, startIndex, endIndex, text, removedTokens: endIndex - startIndex, words: merged.length };
+  }
 
   if (action === 'fix') {
     // fix supports ASR word correction or speaker rename/merge, routed by fields.
@@ -311,7 +327,7 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
     }
   }
 
-  return { error: `unsupported action "${action}"; use fix / retry_transcription / translation_create / translation_ensure / translation_list / translation_read` };
+  return { error: `unsupported action "${action}"; use fix / merge_words / retry_transcription / translation_create / translation_ensure / translation_list / translation_read` };
 }
 
 // Execute a transcript/caption tool. Returns undefined if `name` isn't one of ours.
@@ -335,7 +351,8 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
             results.push({ itemId: it.id, words: it.transcript.length, text: '', skipped: true });
             continue;
           }
-          const r = await transcribePath(it.src!, undefined, { languageCode: 'zh' });
+          const languageCode = typeof args.languageCode === 'string' && args.languageCode.trim() ? args.languageCode.trim() : 'es';
+          const r = await transcribePath(it.src!, undefined, { languageCode });
           ctx.commands.setItemTranscript(it.id, r.words);
           results.push({ itemId: it.id, words: r.words.length, text: r.text.slice(0, 200) });
         }

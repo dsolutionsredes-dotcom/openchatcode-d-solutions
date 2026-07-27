@@ -68,4 +68,11 @@ assert.equal(activePage(timingPages, 450, { hideOnSilenceMs: 500, lingerMs: 100 
 assert.equal(activeTranslation([{ text: 'uno', start: 0, end: 100 }, { text: 'dos', start: 500, end: 600 }], 201, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'translation follows timing policy');
 assert.deepEqual(timingPages[0]?.words[0], { text: 'one', start: 0, end: 100 }, 'timing policy leaves timestamps unchanged');
 
+const legacyPages = [
+  { words: [{ text: 'uno', start: 0, end: 100 }], start: 0, end: 100 },
+  { words: [{ text: 'dos', start: 2_100, end: 2_200 }], start: 2_100, end: 2_200 },
+];
+assert.equal(activePage(legacyPages, 201), null, 'legacy captions hide during a two-second pause');
+assert.equal(activeTranslation([{ text: 'one', start: 0, end: 100 }, { text: 'two', start: 2_100, end: 2_200 }], 201), null, 'legacy translations hide during a two-second pause');
+
 console.log('manualCaptions.check: ok');

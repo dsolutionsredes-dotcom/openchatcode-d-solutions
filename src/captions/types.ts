@@ -162,7 +162,8 @@ export interface CaptionPage {
 const SENTENCE_END = /[.!?。！?…,,]$/;
 const MAX_PHRASE_WORDS = 6;
 const GAP_MS = 700;
-const DEFAULT_LINGER_MS = 1500;
+const DEFAULT_HIDE_ON_SILENCE_MS = 300;
+const DEFAULT_LINGER_MS = 100;
 
 function pageUntil<T extends { end: number; start: number }>(pages: T[], index: number, lingerMs?: number, hideOnSilenceMs?: number): number {
   const page = pages[index]!;
@@ -170,7 +171,7 @@ function pageUntil<T extends { end: number; start: number }>(pages: T[], index: 
   const next = pages[index + 1];
   if (!next) return page.end + linger;
   const gap = next.start - page.end;
-  return gap > Math.max(0, hideOnSilenceMs ?? Number.POSITIVE_INFINITY) ? page.end + linger : next.start;
+  return gap > Math.max(0, hideOnSilenceMs ?? DEFAULT_HIDE_ON_SILENCE_MS) ? page.end + linger : next.start;
 }
 
 // Group words into display pages: one word each (word pacing), or short phrases
