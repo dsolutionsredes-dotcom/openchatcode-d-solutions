@@ -4,10 +4,11 @@
 // `.frag` chain that edit-item-tools.ts drags in. Validation is pure; commit delegates to
 // the same editor commands the dedicated move_item / set_item_timing / remove_item tools
 // use — no logic duplication, just atomic-batch semantics.
-import type { ItemKeyframes, Keyframe, KeyframeProp, MediaAsset, TimelineItem, TimelineState } from '../../editor/types';
+import type { ItemKeyframes, Keyframe, KeyframeProp, MediaAsset, TimelineState } from '../../editor/types';
 import { defaultTrackId, resolveTrackId } from '../../editor/types';
 import { isValidEasing } from '../../editor/keyframes';
 import { getKeyframePropertyDefinition, KEYFRAME_PROPS, supportsKeyframeProperty } from '../../editor/keyframeRegistry';
+import { resolveTimelineItem } from './timeline-item-resolver';
 
 type OpResult = Record<string, unknown>;
 
@@ -23,12 +24,6 @@ export const GENERIC_ADD_KINDS: ReadonlySet<string> = new Set(['video', 'image',
 
 const finiteNum = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-
-function findItem(items: TimelineItem[], id: unknown): TimelineItem | null {
-  const q = String(id ?? '');
-  if (!q) return null;
-  return items.find((it) => it.id === q || it.id.startsWith(q)) ?? null;
-}
 
 /** Reject unknown fields with actionable edit_item errors. */
 const GENERIC_UPDATE_KEYS = new Set([
@@ -154,8 +149,9 @@ export function validateGenericUpdate(state: TimelineState, entry: Record<string
   if (unknown) return { error: unknown };
 
   const itemRef = entry.itemId ?? entry.id;
-  const it = findItem(state.items, itemRef);
-  if (!it) return { error: `item not found: ${String(itemRef ?? '')}` };
+  const resolved = resolveTimelineItem(state, itemRef);
+  if ('error' in resolved) return resolved;
+  const it = resolved.item;
   const plan: OpResult = { ok: true, kind: it.kind, plan: 'genericUpdate', itemId: it.id };
 
   const trackRaw = entry.track ?? entry.trackId;
@@ -205,8 +201,9 @@ export function validateGenericDelete(state: TimelineState, entry: Record<string
   const unknown = rejectUnknownFields(entry, GENERIC_DELETE_KEYS);
   if (unknown) return { error: unknown };
   const itemRef = entry.itemId ?? entry.id;
-  const it = findItem(state.items, itemRef);
-  if (!it) return { error: `item not found: ${String(itemRef ?? '')}` };
+  const resolved = resolveTimelineItem(state, itemRef);
+  if ('error' in resolved) return resolved;
+  const it = resolved.item;
   return { ok: true, kind: it.kind, plan: 'genericDelete', itemId: it.id, ripple: entry.ripple === true };
 }
 

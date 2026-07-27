@@ -9,6 +9,7 @@ import { TIMELINE_TOOL_SCHEMAS, TIMELINE_TOOL_NAMES, execTimelineTool } from './
 import { SCRIPT_TOOL_SCHEMAS, SCRIPT_TOOL_NAMES, execScriptTool } from './tools/script-tools';
 import { FRAMES_TOOL_SCHEMAS, FRAMES_TOOL_NAMES, execFramesTool } from './tools/frames-tool';
 import { SCENE_DETECTION_TOOL_SCHEMAS, SCENE_DETECTION_TOOL_NAMES, execSceneDetectionTool } from './tools/scene-detection-tools';
+import { resolveTimelineItem } from './tools/timeline-item-resolver';
 import { GENERATE_TOOL_SCHEMAS, GENERATE_TOOL_NAMES, execGenerateTool } from './tools/generate-tools';
 import { EFFECT_TOOL_SCHEMAS, EFFECT_TOOL_NAMES, execEffectTool } from './tools/effect-tools';
 import { LIBRARY_TOOL_SCHEMAS, LIBRARY_TOOL_NAMES, execLibraryTool } from './tools/library-tools';
@@ -354,11 +355,7 @@ Contract (MUST follow exactly):
 
 type Args = Record<string, unknown>;
 
-function findItem(ctx: AgentContext, itemId: unknown) {
-  const id = String(itemId ?? '');
-  const items = ctx.getState().items;
-  return items.find((it) => it.id === id || it.id.startsWith(id)) ?? null;
-}
+function findItem(ctx: AgentContext, itemId: unknown) { return resolveTimelineItem(ctx.getState(), itemId); }
 
 // Execute a tool call against the live editor. Returns a JSON-serializable result.
 export async function executeTool(name: string, args: Args, ctx: AgentContext): Promise<unknown> {
@@ -496,23 +493,24 @@ export async function executeTool(name: string, args: Args, ctx: AgentContext): 
       return { ok: true, added: tpl.name, trackId: track, track: trackAlias(ctx.getState(), track) };
     }
     case 'update_item_props': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
       ctx.commands.updateItemProps(it.id, (args.props ?? {}) as Args);
       return { ok: true, itemId: it.id, updated: Object.keys((args.props ?? {}) as Args) };
     }
     case 'move_item': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
       const kind = it.kind === 'audio' ? 'audio' : 'video';
       const track = args.track === undefined ? undefined : resolveTrackId(ctx.getState(), args.track, kind);
       if (args.track !== undefined && !track) return { error: `no compatible track ${args.track}` };
       ctx.commands.moveItem(it.id, { track: track ?? undefined, startFrame: args.startFrame as number });
+      const moved = ctx.getState().items.find((item) => item.id === it.id);
+      if (!moved || (args.startFrame !== undefined && moved.startFrame !== args.startFrame) || (track !== undefined && moved.track !== track)) return { error: 'item move was not applied exactly' };
       return { ok: true, itemId: it.id };
     }
     case 'set_item_timing': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
+      const previous = { startFrame: it.startFrame, durationInFrames: it.durationInFrames };
+      if ((args.startFrame !== undefined && (typeof args.startFrame !== 'number' || !Number.isFinite(args.startFrame) || args.startFrame < 0)) || (args.durationInFrames !== undefined && (typeof args.durationInFrames !== 'number' || !Number.isFinite(args.durationInFrames) || args.durationInFrames <= 0))) return { error: 'startFrame must be a non-negative finite number and durationInFrames must be a positive finite number' };
       if (args.startFrame !== undefined || args.durationInFrames !== undefined) {
         ctx.commands.setItemTiming(it.id, {
           startFrame: args.startFrame as number,
@@ -528,17 +526,20 @@ export async function executeTool(name: string, args: Args, ctx: AgentContext): 
       if (fadeInFrames !== undefined || fadeOutFrames !== undefined) {
         ctx.commands.setItemFade(it.id, { fadeInFrames, fadeOutFrames });
       }
+      const updated = ctx.getState().items.find((item) => item.id === it.id);
+      if (!updated || (args.startFrame !== undefined && updated.startFrame !== args.startFrame) || (args.durationInFrames !== undefined && updated.durationInFrames !== args.durationInFrames)) return { error: 'item timing change was not applied exactly' };
       return {
         ok: true,
         itemId: it.id,
+        previous,
+        applied: { startFrame: updated.startFrame, durationInFrames: updated.durationInFrames },
         ripple: args.ripple === true,
         ...(fadeInFrames !== undefined ? { fadeInFrames } : {}),
         ...(fadeOutFrames !== undefined ? { fadeOutFrames } : {}),
       };
     }
     case 'duplicate_item': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
       ctx.commands.duplicateItem(it.id);
       return { ok: true, duplicated: it.name };
     }
@@ -609,16 +610,17 @@ export async function executeTool(name: string, args: Args, ctx: AgentContext): 
       return { ok: true, ratio: preset.label, width: preset.width, height: preset.height, fit };
     }
     case 'remove_item': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
       if (args.ripple === true) ctx.commands.rippleDeleteItem(it.id); // close the gap
       else ctx.commands.removeItem(it.id);
+      if (ctx.getState().items.some((item) => item.id === it.id)) return { error: 'item removal was not applied' };
       return { ok: true, removed: it.name, ripple: args.ripple === true };
     }
     case 'split_item': {
-      const it = findItem(ctx, args.itemId);
-      if (!it) return { error: `no item ${args.itemId}` };
+      const resolved = findItem(ctx, args.itemId); if ('error' in resolved) return resolved; const it = resolved.item;
+      const beforeCount = ctx.getState().items.length;
       ctx.commands.splitItem(it.id, Number(args.atFrame));
+      if (ctx.getState().items.length < beforeCount + 1 || ctx.getState().items.some((item) => item.id === it.id)) return { error: 'item split was not applied' };
       return { ok: true, itemId: it.id };
     }
     default:

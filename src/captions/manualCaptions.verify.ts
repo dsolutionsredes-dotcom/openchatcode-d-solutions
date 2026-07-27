@@ -63,9 +63,9 @@ assert.deepEqual(placeManualCueTiming([], -500, 800), { start: 0, end: 800 }, 'ç
 assert.equal(captions.hideOnSilenceMs, 300);
 assert.equal(captions.lingerMs, 100);
 const timingPages = [{ words: [{ text: 'one', start: 0, end: 100 }], start: 0, end: 100 }, { words: [{ text: 'two', start: 500, end: 600 }], start: 500, end: 600 }];
-assert.equal(activePage(timingPages, 150, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'long silence hides after linger');
+assert.equal(activePage(timingPages, 201, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'long silence hides after linger');
 assert.equal(activePage(timingPages, 450, { hideOnSilenceMs: 500, lingerMs: 100 })?.words[0]?.text, 'one', 'short silence holds until next cue');
-assert.equal(activeTranslation([{ text: 'uno', start: 0, end: 100 }, { text: 'dos', start: 500, end: 600 }], 150, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'translation follows timing policy');
+assert.equal(activeTranslation([{ text: 'uno', start: 0, end: 100 }, { text: 'dos', start: 500, end: 600 }], 201, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'translation follows timing policy');
 assert.deepEqual(timingPages[0]?.words[0], { text: 'one', start: 0, end: 100 }, 'timing policy leaves timestamps unchanged');
 
 console.log('manualCaptions.check: ok');

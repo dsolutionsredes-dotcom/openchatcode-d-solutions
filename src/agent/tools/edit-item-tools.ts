@@ -570,6 +570,13 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
     case 'genericUpdate':
     case 'genericDelete': {
       const applied = applyGeneric(plan, ctx.commands);
+      const item = ctx.getState().items.find((candidate) => candidate.id === String(plan.itemId));
+      if (plan.plan === 'genericDelete' && item) return { error: 'edit_item delete was not applied' };
+      if (plan.plan === 'genericUpdate' && (!item
+        || (plan.track !== undefined && item.track !== plan.track)
+        || (plan.startFrame !== undefined && item.startFrame !== plan.startFrame)
+        || (plan.durationInFrames !== undefined && item.durationInFrames !== plan.durationInFrames)
+        || (plan.srcInFrame !== undefined && item.srcInFrame !== plan.srcInFrame))) return { error: 'edit_item update was not applied exactly' };
       return applied ?? { error: `unknown plan ${String(plan.plan)}` };
     }
     default:
