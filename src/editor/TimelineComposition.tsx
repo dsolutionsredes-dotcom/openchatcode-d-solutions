@@ -10,8 +10,9 @@ import { itemWindow, keptSegments } from '../transcript/edit';
 import { zoomAt } from './zoom';
 import { sampleKeyframes, volumeAtFrame } from './keyframes';
 import { loadTimelineFonts } from '../fonts/projectFonts';
-import { captionTrackEntries, CSS_TRANSITION_TYPES, GLSL_TRANSITION_TYPES, isAudioTransition, isRasterMediaKind, isVisualItemKind, timelineTrackIds, trackKind } from './types';
+import { captionTrackEntries, isAudioTransition, isVisualItemKind, timelineTrackIds, trackKind } from './types';
 import type { AspectFit, CssTransitionType, GlslTransitionType, KeyframeProp, TimelineItem, TimelineState, TransitionDirection, TransitionItem, Watermark } from './types';
+import { routeVisualTransition } from './transitionRouting';
 
 // fade multiplier at a Sequence-relative frame (0..dur): ramps 0→1 across
 // fadeIn, then 1→0 across fadeOut. Used for visual opacity + audio volume.
@@ -377,12 +378,10 @@ export function TimelineComposition({ state, transparent, browserRenderer = fals
   // A transition straddles the cut: half retreats into outgoing, half
   // into incoming). Extend each clip's render window so both are visible across
   // the window, and drive the incoming clip's entrance over it. GLSL types run
-  // the real fragment shader when BOTH clips are texturable
-  // (video/image); with a DOM clip involved (MG/text — no GL texture, same
-  // limit as any DOM layer) they fall back to a CSS cross-dissolve.
+  // the real fragment shader only when BOTH clips are plain texturable media.
+  // Any ClipWrapper state (transform/crop, zoom/reframe, keyframes, filters or
+  // effects) routes through CSS so the rendered layers keep that state.
   const byId = new Map(state.items.map((it) => [it.id, it]));
-  // gif 也排除:GlTransition 用 <Video> 挂源,gif 无法解码 → delayRender 卡死导出;走 CSS 回退
-  const texturable = (it?: TimelineItem) => !!it && isRasterMediaKind(it.kind) && it.kind !== 'svg' && it.kind !== 'gif';
   const enabledTransitions = (state.transitions ?? []).filter((t) => t.enabled !== false);
   const visualTransitions = enabledTransitions.filter((t) => !isAudioTransition(t.type));
   const entranceOf = new Map<string, { type: CssTransitionType; L: number; dir: TransitionDirection }>();
@@ -396,7 +395,8 @@ export function TimelineComposition({ state, transparent, browserRenderer = fals
     extendAfter.set(t.outgoingItemId, t.durationInFrames - half);
     const out = byId.get(t.outgoingItemId);
     const inc = byId.get(t.incomingItemId);
-    if (GLSL_TRANSITION_TYPES.has(t.type) && texturable(out) && texturable(inc)) {
+    const route = routeVisualTransition(t.type, out, inc);
+    if (route.renderer === 'gl') {
       const from = inc!.startFrame - half; // R = incoming.from - floor(L/2)
       glWindows.push({
         key: t.id,
@@ -412,9 +412,8 @@ export function TimelineComposition({ state, transparent, browserRenderer = fals
         ...(t.type === 'custom-shader' ? { customFrag: t.customFrag, customUniforms: t.customUniforms } : {}),
       });
     } else {
-      // CSS entrance: native CSS type as-is; GLSL type over DOM clips → dissolve
-      const cssType = CSS_TRANSITION_TYPES.has(t.type) ? t.type as CssTransitionType : 'cross-dissolve';
-      entranceOf.set(t.incomingItemId, { type: cssType, L: t.durationInFrames, dir: t.direction ?? 'left' });
+      // CSS entrance keeps both clips in their regular ClipWrapper layers.
+      entranceOf.set(t.incomingItemId, { type: route.type, L: t.durationInFrames, dir: t.direction ?? 'left' });
     }
   }
 
