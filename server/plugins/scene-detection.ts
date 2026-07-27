@@ -28,6 +28,13 @@ const MAX_ANALYSIS_FPS = 12;
 const MAX_ANALYSIS_FRAMES = 36_000;
 const EVIDENCE_OFFSET_MS = 200;
 const FRAME_CACHE_LIMIT = 200;
+const DEFAULT_MAX_ACTIVE_JOBS = 1;
+
+/** Limit concurrent FFmpeg scene scans on constrained VPS instances. */
+export function sceneDetectionMaxActive(): number {
+  const value = Number(process.env.OPENCHATCUT_SCENE_DETECTION_MAX_ACTIVE);
+  return Number.isFinite(value) ? Math.max(1, Math.min(16, Math.floor(value))) : DEFAULT_MAX_ACTIVE_JOBS;
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
@@ -270,6 +277,18 @@ interface InternalJob extends SceneDetectionJobSnapshot {
 const jobs = new Map<string, InternalJob>();
 const terminalStatuses = new Set<SceneDetectionJobStatus>(['completed', 'failed', 'cancelled']);
 
+function normalizedJobOptions(options: Pick<DetectScenesOptions, 'threshold' | 'minSceneMs' | 'maxScenes'>): string {
+  return JSON.stringify({
+    threshold: normalizeSceneThreshold(options.threshold),
+    minSceneMs: Math.max(100, Math.min(60_000, Math.round(options.minSceneMs ?? DEFAULT_MIN_SCENE_MS))),
+    maxScenes: Math.max(1, Math.min(500, Math.round(options.maxScenes ?? DEFAULT_MAX_SCENES))),
+  });
+}
+
+function activeJobCount(): number {
+  return [...jobs.values()].filter((job) => !terminalStatuses.has(job.status)).length;
+}
+
 function publicJob(job: InternalJob): SceneDetectionJobSnapshot {
   return {
     id: job.id,
@@ -324,6 +343,47 @@ async function runJob(job: InternalJob): Promise<void> {
     }
     job.updatedAt = Date.now();
   }
+}
+
+interface StartJobResult {
+  status: 202 | 429;
+  job?: SceneDetectionJobSnapshot;
+  error?: string;
+}
+
+/** Start one bounded FFmpeg job, reusing an equivalent in-flight request. */
+async function startJob(
+  src: string,
+  options: Pick<DetectScenesOptions, 'threshold' | 'minSceneMs' | 'maxScenes'>,
+): Promise<StartJobResult> {
+  const media = mediaFromSrc(src);
+  if ('error' in media) return { status: 429, error: media.error };
+  const key = normalizedJobOptions(options);
+  const duplicate = [...jobs.values()].find((job) => (
+    job.src === media.src && normalizedJobOptions(job.options) === key && !terminalStatuses.has(job.status)
+  ));
+  if (duplicate) return { status: 202, job: publicJob(duplicate) };
+  if (activeJobCount() >= sceneDetectionMaxActive()) {
+    return { status: 429, error: `scene detection capacity reached (max ${sceneDetectionMaxActive()} active job)` };
+  }
+  const now = Date.now();
+  const job: InternalJob = {
+    id: `scene_${randomUUID()}`,
+    src: media.src,
+    file: media.file,
+    status: 'queued',
+    progress: 0,
+    processedMs: 0,
+    createdAt: now,
+    updatedAt: now,
+    result: null,
+    error: null,
+    controller: new AbortController(),
+    options,
+  };
+  jobs.set(job.id, job);
+  void runJob(job);
+  return { status: 202, job: publicJob(job) };
 }
 
 function mediaFromSrc(src: string): { src: string; file: string } | { error: string; status: number } {
@@ -390,24 +450,11 @@ export function sceneDetectionPlugin(): Plugin {
             };
             const media = mediaFromSrc(String(body.src ?? ''));
             if ('error' in media) { sendJson(res, media.status, { error: media.error }); return; }
-            const now = Date.now();
-            const job: InternalJob = {
-              id: `scene_${randomUUID()}`,
-              src: media.src,
-              file: media.file,
-              status: 'queued',
-              progress: 0,
-              processedMs: 0,
-              createdAt: now,
-              updatedAt: now,
-              result: null,
-              error: null,
-              controller: new AbortController(),
-              options: { threshold: body.threshold, minSceneMs: body.minSceneMs, maxScenes: body.maxScenes },
-            };
-            jobs.set(job.id, job);
-            void runJob(job);
-            sendJson(res, 202, publicJob(job));
+            const started = await startJob(media.src, {
+              threshold: body.threshold, minSceneMs: body.minSceneMs, maxScenes: body.maxScenes,
+            });
+            if (!started.job) { sendJson(res, started.status, { error: started.error }); return; }
+            sendJson(res, started.status, started.job);
             return;
           }
 
