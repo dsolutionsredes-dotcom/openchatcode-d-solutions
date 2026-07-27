@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { captionPages, captionsToSrt } from './exportCaptions';
 import { buildLaneGroups } from './lanes';
+import { activePage, activeTranslation } from './types';
 import {
   appendDroppedManualCaption, appendManualCue, appendManualCueToFirstLane, appendManualLane, isManualCaptionEntry,
   newManualCaptions, placeManualCueTiming, removeManualCue, resizeManualCue, updateManualCue,
@@ -58,5 +59,13 @@ assert.deepEqual(placeManualCueTiming(occupied, 1_050, 150), { start: 1_050, end
 assert.deepEqual(placeManualCueTiming(occupied, 950, 200), { start: 1_000, end: 1_200 }, '压到前邻居尾部 → 贴边恰好填满间隙');
 assert.deepEqual(placeManualCueTiming(occupied, 5_000, 700), { start: 5_000, end: 5_700 }, '可越过邻居跳到远处开阔区');
 assert.deepEqual(placeManualCueTiming([], -500, 800), { start: 0, end: 800 }, '空 lane:负落点钳到 0,时长保持');
+
+assert.equal(captions.hideOnSilenceMs, 300);
+assert.equal(captions.lingerMs, 100);
+const timingPages = [{ words: [{ text: 'one', start: 0, end: 100 }], start: 0, end: 100 }, { words: [{ text: 'two', start: 500, end: 600 }], start: 500, end: 600 }];
+assert.equal(activePage(timingPages, 150, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'long silence hides after linger');
+assert.equal(activePage(timingPages, 450, { hideOnSilenceMs: 500, lingerMs: 100 })?.words[0]?.text, 'one', 'short silence holds until next cue');
+assert.equal(activeTranslation([{ text: 'uno', start: 0, end: 100 }, { text: 'dos', start: 500, end: 600 }], 150, { hideOnSilenceMs: 300, lingerMs: 100 }), null, 'translation follows timing policy');
+assert.deepEqual(timingPages[0]?.words[0], { text: 'one', start: 0, end: 100 }, 'timing policy leaves timestamps unchanged');
 
 console.log('manualCaptions.check: ok');

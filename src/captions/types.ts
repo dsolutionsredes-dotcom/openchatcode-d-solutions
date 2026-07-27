@@ -39,6 +39,10 @@ export interface CaptionsData {
   enabled: boolean;
   template: CaptionTemplate;
   pacing: CaptionPacing;
+  /** Hide a resolved caption page when the following cue is separated by a longer silence. */
+  hideOnSilenceMs?: number;
+  /** Keep a resolved caption page visible for this long after its end. */
+  lingerMs?: number;
   /** audio item whose (edited) transcript drives the captions */
   sourceItemId?: string | null;
   /** MULTI-source merge — 字幕可汇总全部已转写轨: item ids whose (edited) transcripts
@@ -158,7 +162,16 @@ export interface CaptionPage {
 const SENTENCE_END = /[.!?。！?…,,]$/;
 const MAX_PHRASE_WORDS = 6;
 const GAP_MS = 700;
-const LINGER_MS = 1500;
+const DEFAULT_LINGER_MS = 1500;
+
+function pageUntil<T extends { end: number; start: number }>(pages: T[], index: number, lingerMs?: number, hideOnSilenceMs?: number): number {
+  const page = pages[index]!;
+  const linger = Math.max(0, lingerMs ?? DEFAULT_LINGER_MS);
+  const next = pages[index + 1];
+  if (!next) return page.end + linger;
+  const gap = next.start - page.end;
+  return gap > Math.max(0, hideOnSilenceMs ?? Number.POSITIVE_INFINITY) ? page.end + linger : next.start;
+}
 
 // Group words into display pages: one word each (word pacing), or short phrases
 // broken on punctuation / length / a big pause (phrase pacing). `breakBefore`
@@ -208,11 +221,11 @@ function paginateContentAware(words: TranscriptWord[], maxPhraseWords: number, b
 
 // The page to show at time `ms`: the latest page whose start has passed, held
 // until the next page starts (or LINGER_MS after the last page's end).
-export function activePage(pages: CaptionPage[], ms: number): CaptionPage | null {
+export function activePage(pages: CaptionPage[], ms: number, timing?: Pick<CaptionsData, 'hideOnSilenceMs' | 'lingerMs'>): CaptionPage | null {
   for (let i = pages.length - 1; i >= 0; i--) {
     if (ms >= pages[i].start) {
-      const until = pages[i + 1]?.start ?? pages[i].end + LINGER_MS;
-      return ms < until ? pages[i] : null;
+      const until = pageUntil(pages, i, timing?.lingerMs, timing?.hideOnSilenceMs);
+      return ms <= until ? pages[i] : null;
     }
   }
   return null;
@@ -226,11 +239,11 @@ export function currentWordIndex(page: CaptionPage, ms: number): number {
 }
 
 // The translated cue active at time `ms` (held until the next cue starts).
-export function activeTranslation(cues: TranslatedCue[], ms: number): TranslatedCue | null {
+export function activeTranslation(cues: TranslatedCue[], ms: number, timing?: Pick<CaptionsData, 'hideOnSilenceMs' | 'lingerMs'>): TranslatedCue | null {
   for (let i = cues.length - 1; i >= 0; i--) {
     if (ms >= cues[i].start) {
-      const until = cues[i + 1]?.start ?? cues[i].end + LINGER_MS;
-      return ms < until ? cues[i] : null;
+      const until = pageUntil(cues, i, timing?.lingerMs, timing?.hideOnSilenceMs);
+      return ms <= until ? cues[i] : null;
     }
   }
   return null;

@@ -60,7 +60,7 @@ export function buildLaneGroups(captions: CaptionsData, items: TimelineItem[], f
       : paginate(words, captions.pacing, per);
     const page = manual
       ? [...pages].reverse().find((candidate) => ms >= candidate.start && ms < candidate.end) ?? null
-      : activePage(pages, ms);
+      : activePage(pages, ms, captions);
     if (!page) return;
     active.push({ entry, lane: { entry, page, curIdx: currentWordIndex(page, ms) }, order });
   });

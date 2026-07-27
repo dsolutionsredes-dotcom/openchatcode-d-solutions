@@ -163,7 +163,7 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
     const target = captionTracks[0];
     if (!target) return;
     if (!target.captions && sourceItemIds.length) {
-      onSetCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: sourceItemIds[0]!, sources: sourceItemIds.length > 1 ? sourceItemIds : undefined, sourceMode: sourceItemIds.length > 1 ? 'item' : undefined, bilingual: false }, target.id);
+      onSetCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', hideOnSilenceMs: 300, lingerMs: 100, sourceItemId: sourceItemIds[0]!, sources: sourceItemIds.length > 1 ? sourceItemIds : undefined, sourceMode: sourceItemIds.length > 1 ? 'item' : undefined, bilingual: false }, target.id);
     }
     setMainTab('字幕');
   };

@@ -32,10 +32,10 @@ function SingleStreamCaptions({ captions, items, ms, width, height, fps }: { cap
     [words, indices, captions.wordOverrides],
   );
   const pages = useMemo(() => paginate(displayWords, captions.pacing, preset.wordsPerPage, breakBefore), [displayWords, captions.pacing, preset.wordsPerPage, breakBefore]);
-  const page = activePage(pages, ms);
+  const page = activePage(pages, ms, captions);
   if (!page) return null;
   const curIdx = currentWordIndex(page, ms);
-  const translated = captions.bilingual && captions.translation ? activeTranslation(captions.translation, ms) : null;
+  const translated = captions.bilingual && captions.translation ? activeTranslation(captions.translation, ms, captions) : null;
 
   return (
     <AbsoluteFill style={CAPTION_OVERLAY_STYLE}>

@@ -14,7 +14,7 @@ import { sourceList } from './captions-sources';
 // bilingual) are all edit_captions actions now; the old flat edit_captions and the
 // edit_caption_words / set_caption_sources behavior is folded in.
 
-const CAPTION_ACTIONS = ['enable', 'disable', 'display_text', 'template', 'style', 'layout', 'layout_policy', 'positions', 'preset_apply', 'preset_delete', 'preset_list', 'preset_rename', 'preset_save', 'bilingual', 'language_mode', 'source_add', 'source_list', 'source_remove', 'source_set', 'source_update', 'track'];
+const CAPTION_ACTIONS = ['enable', 'disable', 'timing', 'display_text', 'template', 'style', 'layout', 'layout_policy', 'positions', 'preset_apply', 'preset_delete', 'preset_list', 'preset_rename', 'preset_save', 'bilingual', 'language_mode', 'source_add', 'source_list', 'source_remove', 'source_set', 'source_update', 'track'];
 
 export const CAPTIONS_TOOL_SCHEMAS: AgentToolSchema[] = [
   {

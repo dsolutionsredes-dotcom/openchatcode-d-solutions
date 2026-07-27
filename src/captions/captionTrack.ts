@@ -7,6 +7,6 @@ export function captionsForTrack(state: TimelineState, trackId: TrackId): Captio
   if (state.captions) return state.captions;
   const source = state.items.find((item) => item.track === trackId && item.transcript?.length);
   return source
-    ? { enabled: true, template: 'plain', pacing: 'phrase', sourceItemId: source.id }
+    ? { enabled: true, template: 'plain', pacing: 'phrase', hideOnSilenceMs: 300, lingerMs: 100, sourceItemId: source.id }
     : null;
 }

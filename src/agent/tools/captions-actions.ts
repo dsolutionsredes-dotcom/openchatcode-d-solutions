@@ -129,7 +129,7 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
     const presetArg = str(args.preset);
     const template: CaptionTemplate = presetArg && presetArg !== 'auto' && isTemplate(presetArg) ? presetArg : (c?.template ?? 'plain');
     const pacing: CaptionPacing = c?.pacing ?? 'phrase';
-    const base: CaptionsData = { ...(c ?? {}), enabled: true, template, pacing };
+    const base: CaptionsData = { ...(c ?? {}), enabled: true, template, pacing, hideOnSilenceMs: c?.hideOnSilenceMs ?? 300, lingerMs: c?.lingerMs ?? 100 };
     if (!c?.sourceItemId && !c?.sources && transcribed[0]) base.sourceItemId = transcribed[0].id;
     if (c) ctx.commands.updateCaptions(base); else ctx.commands.setCaptions(base);
     return { ok: true, enabled: true, template, pacing, note: 'captions read the anchored source; for ALL audible tracks use action=source_set {mode:"timeline"}.' };
@@ -149,6 +149,16 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
     if (!Object.keys(styleOverride).length && !pacing) return { error: 'style needs at least one recognized field in json', ...(ignored.length ? { ignored } : {}) };
     ctx.commands.updateCaptions(patch);
     return { ok: true, applied: Object.keys(styleOverride), ...(pacing ? { pacing } : {}), ...(ignored.length ? { ignored } : {}) };
+  }
+  if (action === 'timing') {
+    const hideOnSilenceMs = num(json.hideOnSilenceMs);
+    const lingerMs = num(json.lingerMs);
+    if (hideOnSilenceMs === undefined && lingerMs === undefined) return { error: 'timing needs {hideOnSilenceMs, lingerMs}' };
+    if ((hideOnSilenceMs !== undefined && hideOnSilenceMs < 0) || (lingerMs !== undefined && lingerMs < 0)) return { error: 'timing values must be non-negative milliseconds' };
+    const previous = { hideOnSilenceMs: c.hideOnSilenceMs ?? 300, lingerMs: c.lingerMs ?? 100 };
+    const applied = { hideOnSilenceMs: hideOnSilenceMs ?? previous.hideOnSilenceMs, lingerMs: lingerMs ?? previous.lingerMs };
+    ctx.commands.updateCaptions(applied);
+    return { ok: true, action: 'timing', previous, applied };
   }
   if (action === 'layout') {
     const layout = toLayout(json, s.width, s.height);

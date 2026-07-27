@@ -25,6 +25,8 @@ export function newManualCaptions(): CaptionsData {
     enabled: true,
     template: 'black-bar',
     pacing: 'phrase',
+    hideOnSilenceMs: 300,
+    lingerMs: 100,
     sourceEntries: [newManualEntry(1)],
     sourceMode: 'item',
   };
