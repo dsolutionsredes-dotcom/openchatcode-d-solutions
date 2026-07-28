@@ -57,13 +57,13 @@ function findAsset(
   id: unknown,
 ): { asset?: (typeof assets)[number]; error?: string; candidates?: Array<{ id: string; name: string; kind: string }> } {
   const query = String(id ?? '').trim();
-  if (!query) return { error: '缺少素材 id' };
+  if (!query) return { error: 'Falta el id del asset' };
   const exact = assets.find((asset) => asset.id === query);
   const matches = exact ? [exact] : assets.filter((asset) => asset.id.startsWith(query));
-  if (!matches.length) return { error: `找不到素材 ${query}` };
+  if (!matches.length) return { error: `No se encontró el asset ${query}` };
   if (matches.length > 1) {
     return {
-      error: `素材前缀 ${query} 不唯一`,
+      error: `El prefijo del asset ${query} no es único`,
       candidates: matches.slice(0, 6).map((asset) => ({ id: asset.id, name: asset.name, kind: asset.kind })),
     };
   }
@@ -81,14 +81,14 @@ export async function execIsolateVoiceTool(
   const item = findItem(state.items, args.itemId);
   if (!item) {
     return {
-      error: `找不到 clip ${args.itemId ?? '(缺 itemId)'}`,
+      error: `No se encontró el clip ${args.itemId ?? '(falta itemId)'}`,
       available: state.items
         .filter((it) => it.kind === 'video' || it.kind === 'audio')
         .map((it) => ({ itemId: it.id, name: it.name, kind: it.kind })),
     };
   }
   if (item.kind !== 'video' && item.kind !== 'audio') {
-    return { error: `isolate_voice 只适用于 video/audio，当前 kind=${item.kind}` };
+    return { error: `isolate_voice solo admite video/audio; el kind actual es ${item.kind}` };
   }
 
   const action = String(args.action ?? 'apply').toLowerCase();
@@ -128,7 +128,7 @@ export async function execIsolateVoiceTool(
       return { error: `denoisedAssetId 必须是 audio，当前 kind=${denoisedAsset.kind}` };
     }
     if (denoisedAsset.id === sourceAsset.id || denoisedAsset.src === sourceAsset.src) {
-      return { error: 'denoisedAssetId 不能与源素材相同' };
+      return { error: 'denoisedAssetId no puede ser el mismo que el asset de origen' };
     }
 
     const unchanged = item.denoisedSrc === denoisedAsset.src
@@ -148,7 +148,7 @@ export async function execIsolateVoiceTool(
   }
 
   if (action !== 'apply') {
-    return { error: `unknown action ${action}（用 apply、attach 或 clear）` };
+    return { error: `Acción desconocida ${action} (usa apply, attach o clear)` };
   }
 
   if (args.sourceAssetId) {

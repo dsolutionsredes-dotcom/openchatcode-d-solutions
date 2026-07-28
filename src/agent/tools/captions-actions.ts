@@ -162,7 +162,7 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
   }
   if (action === 'layout') {
     const layout = toLayout(json, s.width, s.height);
-    if (!layout) return { error: 'layout 移动整块字幕,参数例:{"preset":"bottom-center"}(3×3 锚点/top/bottom/center)或 {"offsetXRatio":0.1,"offsetYRatio":-0.05} 微调;要把多条字幕分开摆(如英文上/中文下)用 action=positions,不是 layout' };
+    if (!layout) return { error: 'layout mueve todo el bloque de captions. Ejemplos: {"preset":"bottom-center"} (anclas 3×3: top/bottom/center) o {"offsetXRatio":0.1,"offsetYRatio":-0.05} para un ajuste fino. Para separar varias líneas usa action=positions, no layout.' };
     ctx.commands.updateCaptions({ layout });
     return { ok: true, layout };
   }

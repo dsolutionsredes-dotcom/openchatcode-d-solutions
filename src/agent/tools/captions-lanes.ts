@@ -52,7 +52,7 @@ export function matchEntries(entries: CaptionSourceEntry[], sel: Json, s: Timeli
     if (idx < 0 || idx >= entries.length) return { error: `index ${idx} out of range (0..${entries.length - 1})` };
     return [idx];
   }
-  if (str(sel.speakerId)) return { error: 'speakerId selector 不支持:无 per-speaker 车道,请按轨/按 item 选择' };
+  if (str(sel.speakerId)) return { error: 'El selector speakerId no es compatible: no hay lanes por speaker. Selecciona por track o item.' };
   const id = str(sel.sourceId) || str(sel.id);
   if (id) {
     const hits = entries.flatMap((e, i) => (e.id === id ? [i] : []));
@@ -92,7 +92,7 @@ export function matchEntries(entries: CaptionSourceEntry[], sel: Json, s: Timeli
     const hits = entries.flatMap((e, i) => (onTrack.has(e.itemId) ? [i] : []));
     return hits.length ? hits : { error: `no source on track "${track}"` };
   }
-  return { error: '缺选择器:每条要带 index / sourceId / trackId / itemId / label / variant 之一定位车道,例 {"index":0} 或 {"trackId":"A2"} 或 {"variant":{"languageCode":"en"}};sourceId 用 source_list 查' };
+  return { error: 'Falta el selector: cada entrada debe incluir index, sourceId, trackId, itemId, label o variant para identificar el lane. Ejemplos: {"index":0}, {"trackId":"A2"} o {"variant":{"languageCode":"en"}}. Consulta sourceId con source_list.' };
 }
 
 const entrySummary = (e: CaptionSourceEntry, i: number) => ({
@@ -122,7 +122,7 @@ export function execLayoutPolicy(json: Json, c: CaptionsData, ctx: AgentContext)
         const o = (sl ?? {}) as Json;
         const sid = str(o.id);
         const anchor = str(o.anchor);
-        if (!sid || !ANCHORS.has(anchor)) return { error: `slot 非法:${JSON.stringify(sl)}(需 id + 3×3 anchor)` };
+        if (!sid || !ANCHORS.has(anchor)) return { error: `slot no válido: ${JSON.stringify(sl)} (requiere id + anchor 3×3)` };
         slots.push({ id: sid, anchor: anchor as CaptionAnchor, offsetXRatio: num(o.offsetXRatio), offsetYRatio: num(o.offsetYRatio), widthRatio: num(o.widthRatio), heightRatio: num(o.heightRatio) });
       }
       patch.layoutPolicy = { mode, slots };
@@ -148,7 +148,7 @@ export function execPositions(json: Json, c: CaptionsData, ctx: AgentContext, s:
   const raw = Array.isArray(json.positions) ? json.positions : null;
   if (!raw?.length) return { error: 'positions 参数例(可直接照抄改数):{"positions":[{"index":0,"anchor":"top-center","offsetYRatio":0.08},{"index":1,"anchor":"bottom-center","offsetYRatio":-0.08}]}——每条 = 选择器(index/sourceId/trackId/variant…)+ anchor(3×3);同 anchor 会堆叠成一块' };
   const entries = ensureEntries(c, s);
-  if (!entries.length) return { error: '当前没有字幕 source:先 edit_captions action=enable 开字幕(或 source_set 指定 sources),再来摆位' };
+  if (!entries.length) return { error: 'No hay sources de captions: ejecuta edit_captions action=enable o source_set con sources antes de ajustar posiciones.' };
   const placed: Result[] = [];
   for (const p of raw) {
     const o = (p ?? {}) as Json;
@@ -203,7 +203,7 @@ export function execSourceUpdate(json: Json, c: CaptionsData, ctx: AgentContext,
       const vLang = str(variantObj?.languageCode ?? o.languageCode);
       if (vKind || vLang) {
         if (vKind && vKind !== 'translation') return { error: `variantKind "${vKind}" 不支持(仅 translation)` };
-        if (!vLang) return { error: 'variant 切换要给翻译目标语言,例 {"variant":{"variantKind":"translation","languageCode":"en"}} 或简写 {"languageCode":"en"}' };
+        if (!vLang) return { error: 'Para cambiar variant indica el idioma de destino; por ejemplo {"variant":{"variantKind":"translation","languageCode":"en"}} o {"languageCode":"en"}.' };
         const item = s.items.find((it) => it.id === e.itemId);
         const v = item ? findVariantByLang(item.variants ?? [], vLang, 'translation') : undefined;
         if (!v) return { error: `item ${e.itemId.slice(0, 8)} 上没有 "${vLang}" 翻译变体 — 先 manage_transcript translation_ensure` };

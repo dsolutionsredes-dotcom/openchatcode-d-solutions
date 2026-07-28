@@ -151,6 +151,6 @@ export async function execTimelineTool(name: string, args: Args, ctx: AgentConte
     }
 
     default:
-      return { error: `unknown action ${args.action}（可选 list/create/duplicate/switch/update/delete）` };
+      return { error: `Acción desconocida ${args.action} (opciones: list/create/duplicate/switch/update/delete)` };
   }
 }

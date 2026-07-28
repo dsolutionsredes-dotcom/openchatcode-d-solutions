@@ -49,15 +49,15 @@ export function stripCodeFences(text: string): string {
     .trim();
 }
 
-/** 静态校验生成的 GLSL：通过返回 null，否则返回中文错误原因（发回给 agent）。 */
+/** Valida GLSL generado: devuelve null si es válido o un error legible para el agente. */
 export function validateShaderSource(glsl: string): string | null {
   const src = glsl.trim();
-  if (!src) return '生成的着色器为空';
-  if (src.length > MAX_GLSL_LEN) return `着色器过长（${src.length} > ${MAX_GLSL_LEN}）`;
-  for (const tok of FORBIDDEN) if (src.includes(tok)) return `禁止的指令：${tok}`;
-  if (!src.includes('u_input')) return '着色器必须采样输入贴图 u_input';
-  if (!/\bmain\b/.test(src)) return '着色器缺少 main() 入口';
-  if (!/fragColor|gl_FragColor/.test(src)) return '着色器必须写出颜色（fragColor / gl_FragColor）';
+  if (!src) return 'El shader está vacío';
+  if (src.length > MAX_GLSL_LEN) return `El shader es demasiado largo (${src.length} > ${MAX_GLSL_LEN})`;
+  for (const tok of FORBIDDEN) if (src.includes(tok)) return `Directiva no permitida: ${tok}`;
+  if (!src.includes('u_input')) return 'El shader debe muestrear la textura de entrada u_input';
+  if (!/\bmain\b/.test(src)) return 'Falta la entrada main() en el shader';
+  if (!/fragColor|gl_FragColor/.test(src)) return 'El shader debe escribir el color (fragColor / gl_FragColor)';
   // 运行时单输入 renderFx 只绑定 u_input 一个 sampler；声明其它 sampler2D 会采样到
   // 未绑定的纹理单元 → 拒绝（契约外的未知采样器）。
   const samplers = [...src.matchAll(/\buniform\s+sampler2D\s+(\w+)/g)].map((m) => m[1]);

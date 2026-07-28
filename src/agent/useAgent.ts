@@ -223,7 +223,7 @@ export function useAgent(ctx: AgentContext, projectId: string) {
         });
         llmProviderRef.current = PROVIDER;
         if (!ac.signal.aborted && ops.length) {
-          if (draftInvalidated) setMessages((m) => [...m, { role: 'error', text: '生成期间工程发生了其他修改；素材已保存到媒体池，请重新发送落轨请求。' }]);
+          if (draftInvalidated) setMessages((m) => [...m, { role: 'error', text: 'El proyecto cambió durante la generación; los assets se conservaron en el media pool. Envía de nuevo la solicitud para colocarlos en la línea de tiempo.' }]);
           else {
             setProposalStale(false);
             setProposal(buildProposal(ops, assistantText, proposalBaseDoc, draft.getState()));
@@ -254,7 +254,7 @@ export function useAgent(ctx: AgentContext, projectId: string) {
     try {
       const out = (await generateAgentText({
         maxOutputTokens: 400,
-        system: '你是视频剪辑助手的提示词增强器。把用户潦草或口语化的剪辑意图，改写成一句清晰、具体、可直接执行的中文剪辑指令。只输出改写后的指令本身，不要解释、不要加引号、不要换行。',
+        system: 'Eres un asistente de edición de vídeo. Reescribe la intención de edición del usuario, aunque sea informal o incompleta, como una instrucción clara, concreta y directamente ejecutable en español. Conserva sin traducir los nombres técnicos, funciones, tipos, IDs, acciones, campos JSON y valores de código. Devuelve solo la instrucción mejorada, sin explicaciones, comillas ni saltos de línea.',
         prompt: t,
       })).trim();
       return out || draft;

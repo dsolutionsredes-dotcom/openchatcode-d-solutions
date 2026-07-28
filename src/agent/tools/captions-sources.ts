@@ -47,11 +47,11 @@ function selectorToEntry(sel: Record<string, unknown>, s: TimelineState): Captio
   const vKind = str(variantObj?.variantKind ?? sel.variantKind);
   const vLang = str(variantObj?.languageCode ?? sel.languageCode);
   if (vKind || vLang) {
-    if (vKind && vKind !== 'translation') return { error: `variantKind "${vKind}" 不支持(仅 translation)` };
-    if (!vLang) return { error: 'variant 需要 languageCode(翻译目标语言)' };
+    if (vKind && vKind !== 'translation') return { error: `variantKind "${vKind}" no es compatible (solo translation)` };
+    if (!vLang) return { error: 'variant necesita languageCode (idioma de destino de la traducción)' };
     const item = s.items.find((it) => it.id === itemId);
     if (!item?.variants || !findVariantByLang(item.variants, vLang, 'translation')) {
-      return { error: `item ${itemId.slice(0, 8)} 上没有 "${vLang}" 翻译变体 — 先 manage_transcript translation_ensure` };
+      return { error: `El item ${itemId.slice(0, 8)} no tiene la variante de traducción "${vLang}"; ejecuta antes manage_transcript translation_ensure.` };
     }
     entry.variant = { variantKind: 'translation', languageCode: vLang };
   }
@@ -161,7 +161,7 @@ export async function languageMode(json: Record<string, unknown>, c: CaptionsDat
     return { ok: true, mode: 'original' };
   }
   if (mode === 'translation') {
-    if (!lang) return { error: 'translation mode needs languageCode (the target language)' };
+    if (!lang) return { error: 'translation mode necesita languageCode (el idioma de destino)' };
     const it = c.sourceItemId ? s.items.find((x) => x.id === c.sourceItemId) : firstTranscribedOnTrack(s, 'A1');
     const v = it?.variants ? findVariantByLang(it.variants, lang, 'translation') : undefined;
     if (!v) return { error: `no "${lang}" transcript variant on the caption source; run manage_transcript translation_ensure first` };
@@ -175,7 +175,7 @@ export async function languageMode(json: Record<string, unknown>, c: CaptionsDat
 /** bilingual — original + a translated 2nd line (action=bilingual / language_mode bilingual). */
 export async function bilingual(json: Record<string, unknown>, c: CaptionsData, ctx: AgentContext, s: TimelineState, langArg?: string): Promise<Result> {
   const lang = langArg ?? (str(json.languageCode) || str(json.lang));
-  if (!lang) return { error: 'bilingual needs languageCode (the language to translate INTO)' };
+  if (!lang) return { error: 'bilingual necesita languageCode (el idioma al que traducir)' };
   try {
     const cues = await buildTranslation(c, s.items, s.fps, lang);
     ctx.commands.updateCaptions({ translation: cues, translationLang: lang, bilingual: true });

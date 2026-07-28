@@ -341,7 +341,7 @@ export async function execHighlightTool(name: string, args: Args, ctx: AgentCont
     typeof args.itemId === 'string' ? args.itemId : undefined,
   );
   if (!item?.transcript?.length) {
-    return { error: '当前时间线没有已转写的视频/音频片段;请先用 transcribe_track 转写,再智能切片。' };
+    return { error: 'La línea de tiempo no tiene clips de vídeo/audio transcritos. Ejecuta primero transcribe_track y después crea los highlights.' };
   }
 
   const ratio = typeof args.ratio === 'string' ? args.ratio : '9:16';
@@ -389,7 +389,7 @@ export async function execHighlightTool(name: string, args: Args, ctx: AgentCont
   }
   if (!highlights.length) {
     ctx.commands.switchTimeline(originalActiveId);
-    return { error: '未能从转写里选出可用的高光片段(模型输出为空且启发式也无候选)。' };
+    return { error: 'No se encontraron highlights utilizables en la transcripción: el modelo y la selección heurística no devolvieron candidatos.' };
   }
 
   const shorts = assembleShorts(ctx, srcTimelineId, item, highlights, preset);

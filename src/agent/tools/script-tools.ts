@@ -66,7 +66,7 @@ export async function execScriptTool(name: string, args: Args, ctx: AgentContext
     }
     case 'apply_script': {
       const md = String(args.timelineMd ?? '');
-      if (!md.trim()) return { error: 'timelineMd is required（传回完整编辑后的 timeline.md）' };
+      if (!md.trim()) return { error: 'timelineMd es obligatorio; devuelve el timeline.md completo después de editarlo.' };
       try {
         const trackId = resolveRequestedTrack(args, ctx);
         if (args.preview === true) {

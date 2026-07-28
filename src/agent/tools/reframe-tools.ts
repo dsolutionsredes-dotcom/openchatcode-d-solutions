@@ -80,16 +80,16 @@ export async function execReframeTool(name: string, args: Args, ctx: AgentContex
 
   // —— 边界校验:环境(像素采样需浏览器) ——
   if (typeof document === 'undefined' || typeof HTMLVideoElement === 'undefined') {
-    return { error: 'auto_reframe 需要浏览器环境(视频像素采样),当前无 DOM,无法运行。' };
+    return { error: 'auto_reframe necesita un entorno de navegador para muestrear píxeles del vídeo; no hay DOM disponible.' };
   }
 
   const state: TimelineState = ctx.getState();
   const videos = state.items.filter((it) => it.kind === 'video');
   const item = findItem(videos, args.itemId);
   if (!item) {
-    return { error: `找不到视频 clip ${args.itemId ?? '(缺 itemId)'}`, available: videos.map((v) => ({ itemId: v.id, name: v.name })) };
+    return { error: `No se encontró el clip de vídeo ${args.itemId ?? '(falta itemId)'}`, available: videos.map((v) => ({ itemId: v.id, name: v.name })) };
   }
-  if (!item.src) return { error: `clip ${item.id} 没有可采样的视频源(src 缺失)` };
+  if (!item.src) return { error: `El clip ${item.id} no tiene una fuente de vídeo muestreable (falta src)` };
 
   // —— 参数清洗 ——
   const intervalFrames = Number.isFinite(Number(args.intervalFrames)) ? Math.max(1, Math.floor(Number(args.intervalFrames))) : undefined;
@@ -117,7 +117,7 @@ export async function execReframeTool(name: string, args: Args, ctx: AgentContex
     });
 
     if (!keyframes.length) {
-      return { error: `auto_reframe: 未能从 clip ${item.id} 采到任何帧(视频可能不可读)`, keyframes: 0 };
+      return { error: `auto_reframe: no se pudo muestrear ningún frame del clip ${item.id} (el vídeo puede no ser legible)`, keyframes: 0 };
     }
 
     clearReframe(ctx, item);
