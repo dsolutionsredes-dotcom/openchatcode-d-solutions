@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import type { ViteDevServer } from 'vite';
 import { serverPlugins } from './plugins/index.ts';
-import { getKey, seedKeystore } from './keystore.ts';
+import { getKey, initializeKeystore, seedKeystore } from './keystore.ts';
 import { proxyMiddleware } from './proxy.ts';
 import { parseEnvText } from '../desktop/env-file.ts';
 import { createMiniConnect } from '../desktop/mini-connect.ts';
@@ -35,6 +35,7 @@ export async function startVpsServer(
   distDir = resolve(process.cwd(), 'dist'),
 ): Promise<VpsServer> {
   await seedFromEnvLocal();
+  await initializeKeystore();
 
   const app = createMiniConnect((err) => {
     console.error('[vps-server]', err instanceof Error ? err.message : err);

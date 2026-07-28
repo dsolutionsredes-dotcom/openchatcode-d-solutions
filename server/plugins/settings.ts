@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import { keyStatus, setKeys } from '../keystore.ts';
+import { initializeKeystore, keyStatus, setKeys } from '../keystore.ts';
 import { runProbe } from '../key-probes.ts';
 import {
   checkMediaDir,
@@ -51,7 +51,8 @@ function settingsBody() {
 export function settingsPlugin(): Plugin {
   return {
     name: 'openchatcut-settings',
-    configureServer(server) {
+    async configureServer(server) {
+      await initializeKeystore();
       server.middlewares.use('/api/keys', async (req, res) => {
         try {
           if (req.method === 'GET') { sendJson(res, 200, settingsBody()); return; }

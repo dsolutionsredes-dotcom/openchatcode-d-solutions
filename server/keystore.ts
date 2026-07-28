@@ -6,16 +6,15 @@
 // routing are configuration, not credentials: the explicit NON_SECRET_NAMES whitelist
 // lets keyStatus() echo their raw values (keyStatus().models) so the settings UI can
 // show and edit them.
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { AI_SDK_BASE_URL_FORMAT, resolveLlmBaseUrl } from './llm-config.ts';
+import { readStore, setStoredEntry } from './plugins/project-store.ts';
 import {
   LLM_PROVIDER_PRESETS,
   llmProviderConfigNames,
   normalizeLlmProvider,
 } from '../shared/llm-providers.ts';
 
-const ENV_PATH = resolve(process.cwd(), '.env.local');
+const PERSISTENCE_KEY = 'keystore:server';
 
 // Whitelist of settable env vars — mirrors what vite.config.ts reads. POST /api/keys
 // rejects anything outside this set so the endpoint can never write arbitrary env.
@@ -77,6 +76,8 @@ export const NON_SECRET_NAMES: ReadonlySet<string> = new Set([
 
 const store = new Map<string, string>();  // current value per key (seed + runtime overrides)
 const envSeeded = new Set<string>();       // which keys came from .env.local / process.env at startup
+const persisted = new Map<string, string>();
+let initialized = false;
 
 /** Seed the store from Vite's loaded env (+ process.env fallback). Call once at startup. */
 export function seedKeystore(env: Record<string, string>): void {
@@ -91,6 +92,24 @@ export function seedKeystore(env: Record<string, string>): void {
     store.set(target, value);
     envSeeded.add(target);
   }
+}
+
+/** Load UI-saved configuration from the server's durable project-store volume.
+ * Persisted values deliberately override deployment environment values; the latter
+ * remain the fallback when a setting has not been saved in the application. */
+export async function initializeKeystore(): Promise<void> {
+  if (initialized) return;
+  const raw = (await readStore()).entries[PERSISTENCE_KEY];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (!SETTABLE.has(name) || typeof value !== 'string') continue;
+      persisted.set(name, value);
+      if (value) store.set(name, value);
+      else store.delete(name);
+      envSeeded.delete(name);
+    }
+  }
+  initialized = true;
 }
 
 /**
@@ -150,7 +169,7 @@ export function computeCaps(): Caps {
   };
 }
 
-export interface KeyState { configured: boolean; source: 'env' | 'runtime' | 'none'; }
+export interface KeyState { configured: boolean; source: 'env' | 'persistent' | 'runtime' | 'none'; }
 export interface KeyStatus { keys: Record<string, KeyState>; caps: Caps; models: Record<string, string>; }
 
 /** Browser-facing status. SECURITY INVARIANT: a SECRET key's value (any name not in
@@ -162,13 +181,13 @@ export function keyStatus(): KeyStatus {
   const models: Record<string, string> = {};
   for (const name of KEY_NAMES) {
     const set = getKey(name).length > 0;
-    keys[name] = { configured: set, source: set ? (envSeeded.has(name) ? 'env' : 'runtime') : 'none' };
+    keys[name] = { configured: set, source: set ? (persisted.has(name) ? 'persistent' : envSeeded.has(name) ? 'env' : 'runtime') : 'none' };
     if (NON_SECRET_NAMES.has(name)) models[name] = getKey(name);
   }
   return { keys, caps: computeCaps(), models };
 }
 
-/** Apply key edits from the settings UI: validate, update memory, persist to .env.local.
+/** Apply key edits from the settings UI: validate, update memory, persist to /data project store.
  * Empty value clears a key. Values containing newlines are rejected. Unknown names ignored. */
 export async function setKeys(patch: Record<string, unknown>): Promise<void> {
   let clean = new Map<string, string>();
@@ -187,12 +206,9 @@ export async function setKeys(patch: Record<string, unknown>): Promise<void> {
   for (const [name, v] of clean) {
     if (v) { store.set(name, v); envSeeded.delete(name); }  // now a runtime value
     else store.delete(name);
+    if (v) persisted.set(name, v); else persisted.delete(name);
   }
-  const existing = await readFile(ENV_PATH, 'utf8').catch((err: NodeJS.ErrnoException) => {
-    if (err.code === 'ENOENT') return '';
-    throw err;
-  });
-  await writeFile(ENV_PATH, mergeEnvText(existing, clean), 'utf8');
+  await setStoredEntry(PERSISTENCE_KEY, Object.fromEntries(persisted));
 }
 
 /** One .env line. dotenv treats an unquoted `#` as an inline comment and strips a fully
