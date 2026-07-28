@@ -96,6 +96,52 @@ async function streamToFile(
   return size;
 }
 
+export interface StoredUpload {
+  name: string;
+  path: string;
+  bytes: number;
+  fileKey: string;
+  cloud: 'ok' | 'off' | 'failed';
+}
+
+/** Persist raw media bytes with the same atomic local/R2 flow used by /upload. */
+export async function storeUploadStream(
+  source: Readable | NodeJS.ReadableStream,
+  options: {
+    originalName: string;
+    assetId?: string;
+    contentType?: string;
+    maxBytes?: number;
+  },
+): Promise<StoredUpload> {
+  const assetId = String(options.assetId ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  const ext = extname(options.originalName).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.bin';
+  const fname = assetId ? `${assetId}${ext}` : `${randomUUID()}${ext}`;
+  const dir = uploadDir();
+  await mkdir(dir, { recursive: true });
+  const partPath = join(dir, `.${fname}.part`);
+  const finalPath = join(dir, fname);
+  const bytes = await streamToFile(source, partPath, options.maxBytes ?? maxUploadBytes());
+  if (bytes === 0) {
+    await unlink(partPath).catch(() => {});
+    throw new Error('empty body');
+  }
+  await rename(partPath, finalPath);
+
+  let cloud: StoredUpload['cloud'] = 'off';
+  if (r2Config()) {
+    try {
+      await putUploadFile(fname, finalPath, options.contentType);
+      cloud = 'ok';
+    } catch {
+      // The local file is authoritative for this request; callers must not expose
+      // storage credentials or provider errors in their response.
+      cloud = 'failed';
+    }
+  }
+  return { name: fname, path: `/media/uploads/${fname}`, bytes, fileKey: `uploads/${fname}`, cloud };
+}
+
 function contentLengthOf(req: IncomingMessage): number | null {
   const raw = req.headers['content-length'];
   if (raw == null || raw === '') return null;

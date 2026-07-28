@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
+import type { MediaKind } from '../../shared/media-kind.ts';
 
 export interface ProjectMeta {
   id: string;
@@ -57,8 +58,54 @@ export async function listExternalProjects(includeDeleted = false): Promise<Proj
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+export interface ExternalProjectAsset {
+  id: string;
+  name: string;
+  kind: MediaKind;
+  src: string;
+  durationInFrames: number;
+}
+
+interface StoredProjectDoc {
+  version: unknown;
+  assets: ExternalProjectAsset[];
+  mediaFolders: unknown[];
+  timelines: unknown[];
+  activeTimelineId: string;
+  [key: string]: unknown;
+}
+
 export async function getExternalProject(projectId: string): Promise<ProjectMeta | undefined> {
   return (await listExternalProjects()).find((project) => project.id === projectId);
+}
+
+function isProjectDoc(value: unknown): value is StoredProjectDoc {
+  return !!value
+    && typeof value === 'object'
+    && Array.isArray((value as StoredProjectDoc).assets)
+    && Array.isArray((value as StoredProjectDoc).mediaFolders)
+    && Array.isArray((value as StoredProjectDoc).timelines)
+    && typeof (value as StoredProjectDoc).activeTimelineId === 'string';
+}
+
+/** Adds one pool asset to the already-persisted ProjectDoc. It never changes a timeline. */
+export async function addExternalProjectAsset(
+  projectId: string,
+  asset: ExternalProjectAsset,
+): Promise<ExternalProjectAsset | undefined> {
+  const store = await readStore();
+  const metas = projectMetas(store.entries.projects);
+  const meta = metas.find((project) => project.id === projectId && !project.deletedAt);
+  const current = store.entries[`project:${projectId}`];
+  if (!meta || !isProjectDoc(current)) return undefined;
+
+  const next: StoredProjectDoc = { ...current, assets: [...current.assets, asset] };
+  const updatedAt = Date.now();
+  await setStoredEntry(`project:${projectId}`, next);
+  await setStoredEntry('projects', metas.map((project) => (
+    project.id === projectId ? { ...project, updatedAt } : project
+  )));
+  return asset;
 }
 
 export async function createExternalProject(

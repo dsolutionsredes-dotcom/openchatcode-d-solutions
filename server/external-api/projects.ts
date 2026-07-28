@@ -1,6 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createExternalProject, getExternalProject, listExternalProjects } from '../external-agent/projects.ts';
+import { addExternalProjectAsset, createExternalProject, getExternalProject, listExternalProjects } from '../external-agent/projects.ts';
+import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
+import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -50,6 +52,85 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return parsed;
 }
 
+function requestedKind(value: string | null): MediaKind | null | undefined {
+  if (value === null) return undefined;
+  return value === 'video' || value === 'image' || value === 'audio' || value === 'gif' || value === 'svg'
+    ? value
+    : null;
+}
+
+function contentType(req: IncomingMessage): string {
+  const value = req.headers['content-type'];
+  return typeof value === 'string' ? value : '';
+}
+
+function declaredContentLength(req: IncomingMessage): number | undefined {
+  const value = req.headers['content-length'];
+  const parsed = typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+async function createExternalAsset(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectId: string,
+  url: URL,
+): Promise<void> {
+  if (!await getExternalProject(projectId)) {
+    sendJson(res, 404, { error: 'project not found' });
+    return;
+  }
+  const originalName = (url.searchParams.get('name') ?? '').trim();
+  if (!originalName) {
+    sendJson(res, 400, { error: 'name is required' });
+    return;
+  }
+  const requested = requestedKind(url.searchParams.get('kind'));
+  if (requested === null) {
+    sendJson(res, 400, { error: 'unsupported asset kind' });
+    return;
+  }
+  const detected = kindOfDescriptor(originalName, contentType(req));
+  if (!requested && !detected) {
+    sendJson(res, 415, { error: 'unsupported media type' });
+    return;
+  }
+  if (requested && detected && requested !== detected) {
+    sendJson(res, 400, { error: 'kind does not match the uploaded media type' });
+    return;
+  }
+  const declared = declaredContentLength(req);
+  if (declared !== undefined && declared > maxUploadBytes()) {
+    sendJson(res, 413, { error: 'file too large' });
+    req.resume();
+    return;
+  }
+
+  const kind = requested ?? detected!;
+  const stored = await storeUploadStream(req, {
+    originalName,
+    assetId: randomUUID(),
+    contentType: contentType(req) || undefined,
+    maxBytes: maxUploadBytes(),
+  });
+  const asset = {
+    id: randomUUID(),
+    name: originalName,
+    kind,
+    src: stored.path,
+    durationInFrames: 150,
+  } as const;
+  const registered = await addExternalProjectAsset(projectId, asset);
+  if (!registered) {
+    sendJson(res, 404, { error: 'project not found' });
+    return;
+  }
+  sendJson(res, 201, {
+    projectId,
+    asset: { id: registered.id, name: registered.name, kind: registered.kind, src: registered.src },
+  });
+}
+
 export async function handleExternalProjectsRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -60,13 +141,19 @@ export async function handleExternalProjectsRequest(
   }
 
   const url = new URL(req.url ?? '/', 'http://localhost');
-  const match = url.pathname.match(/^\/projects(?:\/([^/]+))?$/);
+  const match = url.pathname.match(/^\/projects(?:\/([^/]+))?(?:\/assets)?$/);
   if (!match) {
     sendJson(res, 404, { error: 'not found' });
     return;
   }
 
-  if (req.method === 'POST' && !match[1]) {
+  const projectId = match[1] ? decodeURIComponent(match[1]) : undefined;
+  const isAssetsRoute = url.pathname.endsWith('/assets');
+  if (req.method === 'POST' && projectId && isAssetsRoute) {
+    await createExternalAsset(req, res, projectId, url);
+    return;
+  }
+  if (req.method === 'POST' && !projectId) {
     const project = await createExternalProject(await readJson(req));
     sendJson(res, 201, project);
     return;
@@ -75,8 +162,8 @@ export async function handleExternalProjectsRequest(
     sendJson(res, 200, await listExternalProjects());
     return;
   }
-  if (req.method === 'GET' && match[1]) {
-    const project = await getExternalProject(decodeURIComponent(match[1]));
+  if (req.method === 'GET' && projectId && !isAssetsRoute) {
+    const project = await getExternalProject(projectId);
     if (!project) {
       sendJson(res, 404, { error: 'project not found' });
       return;
