@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
+import { readStore, setStoredEntry } from './project-store.ts';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
@@ -36,6 +37,12 @@ interface GenerationJob {
   cleanupResult?: (result: GenerationResult) => Promise<void> | void;
   retentionMs: number;
   expiryTimer?: NodeJS.Timeout;
+}
+
+interface PersistedGenerationJob extends GenerationJobSnapshot {
+  jobId: string;
+  type: string;
+  projectId?: string;
 }
 
 export interface GenerationJobSnapshot {
@@ -74,12 +81,122 @@ export interface GenerationJobOptions {
 const jobs = new Map<string, GenerationJob>();
 const TERMINAL = new Set<GenerationJobStatus>(['succeeded', 'failed']);
 const MAX_JOB_AGE_MS = 60 * 60_000;
+const PERSISTENCE_KEY = 'jobs:server';
+const INTERRUPTION_ERROR = 'job interrupted by process restart; automatic resume is not supported';
+let persistenceEnabled = false;
+let persistenceWrites = Promise.resolve();
 
-function cleanOldJobs() {
-  const cutoff = Date.now() - MAX_JOB_AGE_MS;
-  for (const [id, job] of jobs) {
-    if (TERMINAL.has(job.status) && job.updatedAt < cutoff) void evictTerminalJob(id);
+function jobType(params: Record<string, unknown>): string {
+  return typeof params.kind === 'string' && params.kind.trim() ? params.kind : 'unknown';
+}
+
+function projectIdOf(params: Record<string, unknown>): string | undefined {
+  return typeof params.projectId === 'string' && params.projectId.trim() ? params.projectId : undefined;
+}
+
+function snapshotOf(job: GenerationJob): GenerationJobSnapshot {
+  return {
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    phase: job.phase,
+    processedFrames: job.processedFrames,
+    totalFrames: job.totalFrames,
+    params: job.params,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    result: job.result,
+    results: job.results,
+    error: job.error,
+  };
+}
+
+function persistedOf(job: GenerationJob): PersistedGenerationJob {
+  return { ...snapshotOf(job), jobId: job.id, type: jobType(job.params), ...(projectIdOf(job.params) ? { projectId: projectIdOf(job.params) } : {}) };
+}
+
+function isPersistedGenerationJob(value: unknown): value is PersistedGenerationJob {
+  if (!value || typeof value !== 'object') return false;
+  const job = value as Partial<PersistedGenerationJob>;
+  return typeof job.jobId === 'string'
+    && typeof job.type === 'string'
+    && (job.status === 'queued' || job.status === 'running' || job.status === 'succeeded' || job.status === 'failed')
+    && typeof job.createdAt === 'number'
+    && typeof job.updatedAt === 'number'
+    && typeof job.progress === 'number'
+    && !!job.params && typeof job.params === 'object' && !Array.isArray(job.params);
+}
+
+function queuePersistence(action: () => Promise<void>): void {
+  if (!persistenceEnabled) return;
+  persistenceWrites = persistenceWrites.then(action, action).catch((error) => {
+    console.warn(`[generation-job] persistence failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+function persistJob(job: GenerationJob): void {
+  const stored = persistedOf(job);
+  queuePersistence(async () => {
+    const current = await readStore();
+    const records = Array.isArray(current.entries[PERSISTENCE_KEY])
+      ? current.entries[PERSISTENCE_KEY].filter(isPersistedGenerationJob)
+      : [];
+    await setStoredEntry(PERSISTENCE_KEY, [stored, ...records.filter((entry) => entry.jobId !== stored.jobId)]);
+  });
+}
+
+function removePersistedJob(jobId: string): void {
+  queuePersistence(async () => {
+    const current = await readStore();
+    const records = Array.isArray(current.entries[PERSISTENCE_KEY])
+      ? current.entries[PERSISTENCE_KEY].filter(isPersistedGenerationJob)
+      : [];
+    await setStoredEntry(PERSISTENCE_KEY, records.filter((entry) => entry.jobId !== jobId));
+  });
+}
+
+/** Initialize durable state from the project-store volume. Safe to call more than once. */
+export async function initializeGenerationJobStore(force = false): Promise<void> {
+  if (persistenceEnabled && !force) return;
+  if (force) {
+    for (const job of jobs.values()) if (job.expiryTimer) clearTimeout(job.expiryTimer);
+    jobs.clear();
   }
+  persistenceEnabled = true;
+  const store = await readStore();
+  const records = Array.isArray(store.entries[PERSISTENCE_KEY])
+    ? store.entries[PERSISTENCE_KEY].filter(isPersistedGenerationJob)
+    : [];
+  let recoveredInterrupted = false;
+  for (const record of records) {
+    const interrupted = record.status === 'queued' || record.status === 'running';
+    const job: GenerationJob = {
+      id: record.jobId,
+      status: interrupted ? 'failed' : record.status,
+      progress: interrupted ? 100 : record.progress,
+      phase: interrupted ? 'interrupted' : record.phase,
+      processedFrames: record.processedFrames,
+      totalFrames: record.totalFrames,
+      params: record.params,
+      createdAt: record.createdAt,
+      updatedAt: interrupted ? Date.now() : record.updatedAt,
+      result: record.result,
+      results: record.results,
+      error: interrupted ? INTERRUPTION_ERROR : record.error,
+      retentionMs: MAX_JOB_AGE_MS,
+    };
+    jobs.set(job.id, job);
+    if (interrupted) recoveredInterrupted = true;
+    else scheduleExpiry(job);
+  }
+  if (recoveredInterrupted) {
+    for (const job of jobs.values()) if (job.phase === 'interrupted') persistJob(job);
+  }
+}
+
+/** Wait for queued durable writes; used by focused lifecycle verification. */
+export async function flushGenerationJobPersistence(): Promise<void> {
+  await persistenceWrites;
 }
 
 function normalizeRetentionMs(value: number | undefined): number {
@@ -98,6 +215,7 @@ async function evictTerminalJob(jobId: string): Promise<boolean> {
   if (!job || !TERMINAL.has(job.status)) return false;
   jobs.delete(jobId);
   if (job.expiryTimer) clearTimeout(job.expiryTimer);
+  removePersistedJob(jobId);
   if (job.results?.length && job.cleanupResult) {
     try {
       await Promise.all(job.results.map((result) => job.cleanupResult!(result)));
@@ -122,6 +240,7 @@ function applyProgress(job: GenerationJob, next: GenerationJobProgress): void {
     job.processedFrames = job.totalFrames === undefined ? processed : Math.min(job.totalFrames, processed);
   }
   job.updatedAt = Date.now();
+  persistJob(job);
 }
 
 async function runGenerationJob(
@@ -136,6 +255,7 @@ async function runGenerationJob(
     job.progress = 10;
     job.phase = 'starting';
     job.updatedAt = Date.now();
+    persistJob(job);
     const returned = await task(job.id, (next) => applyProgress(job, next));
     job.results = Array.isArray(returned) ? returned : [returned];
     job.result = job.results[0];
@@ -151,6 +271,7 @@ async function runGenerationJob(
   } finally {
     job.updatedAt = Date.now();
     release?.();
+    persistJob(job);
     scheduleExpiry(job);
   }
 }
@@ -160,7 +281,6 @@ export function createGenerationJob(
   task: (jobId: string, update: UpdateGenerationJob) => Promise<GenerationResult | GenerationResult[]>,
   options: GenerationJobOptions = {},
 ): { jobId: string; status: 'queued' } {
-  cleanOldJobs();
   const id = randomUUID();
   const now = Date.now();
   const job: GenerationJob = {
@@ -175,6 +295,7 @@ export function createGenerationJob(
     retentionMs: normalizeRetentionMs(options.retentionMs),
   };
   jobs.set(id, job);
+  persistJob(job);
   void runGenerationJob(job, task, options);
   return { jobId: id, status: 'queued' };
 }
@@ -182,20 +303,7 @@ export function createGenerationJob(
 export function getGenerationJobSnapshot(jobId: string): GenerationJobSnapshot | undefined {
   const job = jobs.get(jobId);
   if (!job) return undefined;
-  return {
-    id: job.id,
-    status: job.status,
-    progress: job.progress,
-    phase: job.phase,
-    processedFrames: job.processedFrames,
-    totalFrames: job.totalFrames,
-    params: job.params,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    result: job.result,
-    results: job.results,
-    error: job.error,
-  };
+  return snapshotOf(job);
 }
 
 /** Remove a finished job after a one-shot consumer has downloaded its result. */
@@ -255,7 +363,8 @@ const wait = (milliseconds: number) => new Promise((resolvePromise) => setTimeou
 export function generationProgressPlugin(): Plugin {
   return {
     name: 'openchatcut-generation-progress',
-    configureServer(server) {
+    async configureServer(server) {
+      await initializeGenerationJobStore();
       server.middlewares.use('/generate/progress', async (req, res) => {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed — use POST' }); return; }
         try {
