@@ -1,10 +1,10 @@
-import { getKey, type KeyName } from '../keystore.ts';
 import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { createGenerationJob, getGenerationJobSnapshot } from '../plugins/generation-jobs.ts';
 import { loadExternalProjectDoc } from './projects.ts';
 import { createExternalEditSession, captureExternalToolActions, externalDraftContext, reviewExternalEditSession } from '../../src/agent/external-edit-session.ts';
 import { runAgent } from '../../src/agent/runtime.ts';
-import { getLanguageModel, normalizeLlmProvider } from '../../src/agent/client.ts';
+import { getLanguageModel } from '../../src/agent/client.ts';
+import { hasProviderCredentials, resolveProviderConfig } from '../provider-config.ts';
 
 const RUNS_KEY = 'jobs:agent-runs';
 
@@ -48,17 +48,6 @@ export async function getExternalAgentRun(runId: string): Promise<ExternalAgentR
   return status === run.status ? run : { ...run, status, error: job.error ?? run.error, updatedAt: job.updatedAt };
 }
 
-function llmConfig(projectId: string): { provider: ReturnType<typeof normalizeLlmProvider>; model: string; openAiApiMode: 'responses' | 'chat' } | null {
-  const provider = normalizeLlmProvider(getKey('LLM_PROVIDER'));
-  const apiKeyName = `LLM_${provider.toUpperCase()}_API_KEY` as KeyName;
-  const apiKey = getKey(apiKeyName);
-  if (!apiKey) return null;
-  const model = getKey(`LLM_${provider.toUpperCase()}_MODEL` as KeyName) || getKey('LLM_MODEL');
-  const mode = getKey('LLM_OPENAI_API_MODE' as KeyName) === 'chat' ? 'chat' : 'responses';
-  void projectId;
-  return { provider, model, openAiApiMode: mode };
-}
-
 const SERVER_SAFE_TOOLS = new Set([
   'read_timeline', 'set_aspect_ratio', 'move_item', 'set_item_timing', 'duplicate_item',
   'remove_item', 'split_item', 'clear_timeline', 'update_item_props', 'edit_item',
@@ -79,8 +68,8 @@ export async function createExternalAgentRun(
     };
     await saveRun(run);
     update({ progress: 10, phase: 'running' });
-    const config = llmConfig(projectId);
-    if (!config) throw new Error('LLM_NOT_CONFIGURED');
+    const config = resolveProviderConfig({ category: 'agent-brain' });
+    if (!hasProviderCredentials(config)) throw new Error('LLM_NOT_CONFIGURED');
     const session = createExternalEditSession(doc, 'External Agent', 'manual');
     const live = {
       commands: session.draft!.commands, getState: session.draft!.getState, getDoc: session.draft!.getDoc,
