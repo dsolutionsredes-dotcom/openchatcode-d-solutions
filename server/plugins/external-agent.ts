@@ -8,6 +8,7 @@ import {
 } from '../external-agent/broker.ts';
 import { handleMcpRequest, mcpTools } from '../external-agent/mcp.ts';
 import { handleExternalProjectsRequest } from '../external-api/projects.ts';
+import type { ExternalAgentApi } from '../external-api/projects.ts';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -96,16 +97,12 @@ async function handleBridge(req: IncomingMessage, res: ServerResponse): Promise<
   sendJson(res, 404, { error: 'not found' });
 }
 
-export function externalAgentPlugin(): Plugin {
+export function externalAgentPlugin(agentApi?: ExternalAgentApi): Plugin {
   return {
     name: 'openchatcut-external-agent',
     configureServer(server) {
       server.middlewares.use('/api/external', (req, res) => {
-        void handleExternalProjectsRequest(req, res, async () => ({
-          ...await server.ssrLoadModule('/src/agent/external-edit-session.ts'),
-          ...await server.ssrLoadModule('/src/agent/runtime.ts'),
-          ...await server.ssrLoadModule('/src/agent/client.ts'),
-        })).catch((error) => {
+        void handleExternalProjectsRequest(req, res, agentApi).catch((error) => {
           if (!res.headersSent) sendJson(res, 500, { error: 'external projects request failed' });
           server.config.logger.error(`[external-api] ${error instanceof Error ? error.message : 'request failed'}`);
         });

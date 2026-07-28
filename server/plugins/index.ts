@@ -32,9 +32,10 @@ import { settingsPlugin } from './settings.ts';
 import { externalAgentPlugin } from './external-agent.ts';
 import { llmProxyPlugin } from './llm-proxy.ts';
 import { getKey } from '../keystore.ts';
+import type { ExternalAgentApi } from '../external-api/projects.ts';
 
-export function serverPlugins(): Plugin[] {
-  return [llmProxyPlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
+export function serverPlugins(options: { externalAgentApi?: ExternalAgentApi } = {}): Plugin[] {
+  return [llmProxyPlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(options.externalAgentApi), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
     get baseUrl() { return getKey('IMAGE_BASE_URL') || 'https://api.openai.com'; },
     get apiKey() { return getKey('IMAGE_API_KEY') || getKey('OPENAI_API_KEY'); },
     get geminiBaseUrl() { return getKey('GEMINI_BASE_URL') || 'https://generativelanguage.googleapis.com'; },

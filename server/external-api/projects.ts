@@ -3,8 +3,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { addExternalProjectAsset, createExternalProject, getExternalProject, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
-import { createExternalAgentRun, getExternalAgentRun } from '../external-agent/agent-runs.ts';
-import type { AgentModuleLoader } from '../external-agent/agent-runs.ts';
+
+export interface ExternalAgentApi {
+  createRun: (projectId: string, message: string, references: unknown[]) => Promise<{ runId: string; status: string }>;
+  getRun: (runId: string) => Promise<unknown | undefined>;
+}
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -136,7 +139,7 @@ async function createExternalAsset(
 export async function handleExternalProjectsRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  loadAgentModules?: AgentModuleLoader,
+  agentApi?: ExternalAgentApi,
 ): Promise<void> {
   if (!isExternalApiAuthorized(req)) {
     sendJson(res, 401, { error: 'unauthorized' });
@@ -146,7 +149,7 @@ export async function handleExternalProjectsRequest(
   const url = new URL(req.url ?? '/', 'http://localhost');
   const agentRun = url.pathname.match(/^\/agent\/runs\/([^/]+)$/);
   if (req.method === 'GET' && agentRun) {
-    const run = await getExternalAgentRun(decodeURIComponent(agentRun[1]));
+    const run = await agentApi?.getRun(decodeURIComponent(agentRun[1]));
     if (!run) { sendJson(res, 404, { error: 'run not found' }); return; }
     sendJson(res, 200, run);
     return;
@@ -159,8 +162,8 @@ export async function handleExternalProjectsRequest(
     if (body.references !== undefined && !Array.isArray(body.references)) { sendJson(res, 400, { error: 'references must be an array' }); return; }
     const projectId = decodeURIComponent(agentMessage[1]);
     try {
-      if (!loadAgentModules) throw new Error('agent runtime unavailable');
-      const run = await createExternalAgentRun(projectId, message, Array.isArray(body.references) ? body.references : [], loadAgentModules);
+      if (!agentApi) throw new Error('agent runtime unavailable');
+      const run = await agentApi.createRun(projectId, message, Array.isArray(body.references) ? body.references : []);
       sendJson(res, 202, { runId: run.runId, status: run.status });
     } catch (error) {
       if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') sendJson(res, 404, { error: 'project not found' });

@@ -11,11 +11,18 @@
 import { parseSkillFrontmatter, type SkillFront } from './skill-frontmatter';
 
 // Vite raw-imports every file under skills/ (SKILL.md + references/examples/scripts).
-const RAW = import.meta.glob('./*/**/*', {
+const viteGlob = (import.meta as ImportMeta & {
+  glob?: (pattern: string, options: Record<string, unknown>) => Record<string, string>;
+}).glob;
+
+// The external agent runs in the Node VPS bundle too. Vite expands this in the
+// browser build; Node has no `import.meta.glob`, so server proposals simply omit
+// optional plugin-skill catalog entries instead of failing at module load.
+const RAW = viteGlob ? viteGlob('./*/**/*', {
   query: '?raw',
   import: 'default',
   eager: true,
-}) as Record<string, string>;
+}) : {};
 
 export interface PluginSkill extends SkillFront {
   slug: string; // Directory name is the stable skill id.

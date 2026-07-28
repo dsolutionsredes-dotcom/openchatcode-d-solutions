@@ -9,6 +9,7 @@ import { proxyMiddleware } from './proxy.ts';
 import { parseEnvText } from '../desktop/env-file.ts';
 import { createMiniConnect } from '../desktop/mini-connect.ts';
 import { distStaticMiddleware, uploadsMiddleware } from '../desktop/static-files.ts';
+import { createExternalAgentRun, getExternalAgentRun } from './external-agent/agent-runs.ts';
 
 const HOST = '0.0.0.0';
 const PORT = 5199;
@@ -66,7 +67,10 @@ export async function startVpsServer(
     },
   } as unknown as ViteDevServer;
 
-  for (const plugin of serverPlugins()) {
+  for (const plugin of serverPlugins({ externalAgentApi: {
+    createRun: createExternalAgentRun,
+    getRun: getExternalAgentRun,
+  } })) {
     const hook = plugin.configureServer;
     const fn = typeof hook === 'function' ? hook : hook?.handler;
     await fn?.call(plugin as never, fake);

@@ -2,8 +2,9 @@ import { getKey, type KeyName } from '../keystore.ts';
 import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { createGenerationJob, getGenerationJobSnapshot } from '../plugins/generation-jobs.ts';
 import { loadExternalProjectDoc } from './projects.ts';
-
-export type AgentModuleLoader = () => Promise<Record<string, unknown>>;
+import { createExternalEditSession, captureExternalToolActions, externalDraftContext, reviewExternalEditSession } from '../../src/agent/external-edit-session.ts';
+import { runAgent } from '../../src/agent/runtime.ts';
+import { getLanguageModel, normalizeLlmProvider } from '../../src/agent/client.ts';
 
 const RUNS_KEY = 'jobs:agent-runs';
 
@@ -47,8 +48,8 @@ export async function getExternalAgentRun(runId: string): Promise<ExternalAgentR
   return status === run.status ? run : { ...run, status, error: job.error ?? run.error, updatedAt: job.updatedAt };
 }
 
-function llmConfig(projectId: string, normalizeProvider: (value: unknown) => string): { provider: string; model: string; openAiApiMode: 'responses' | 'chat' } | null {
-  const provider = normalizeProvider(getKey('LLM_PROVIDER'));
+function llmConfig(projectId: string): { provider: ReturnType<typeof normalizeLlmProvider>; model: string; openAiApiMode: 'responses' | 'chat' } | null {
+  const provider = normalizeLlmProvider(getKey('LLM_PROVIDER'));
   const apiKeyName = `LLM_${provider.toUpperCase()}_API_KEY` as KeyName;
   const apiKey = getKey(apiKeyName);
   if (!apiKey) return null;
@@ -68,7 +69,6 @@ export async function createExternalAgentRun(
   projectId: string,
   message: string,
   references: unknown[],
-  loadAgentModules: AgentModuleLoader,
 ): Promise<ExternalAgentRun> {
   const doc = await loadExternalProjectDoc(projectId);
   if (!doc) throw new Error('PROJECT_NOT_FOUND');
@@ -79,15 +79,7 @@ export async function createExternalAgentRun(
     };
     await saveRun(run);
     update({ progress: 10, phase: 'running' });
-    const modules = await loadAgentModules();
-    const createExternalEditSession = modules.createExternalEditSession as (doc: object, name: string, approval: string) => any;
-    const captureExternalToolActions = modules.captureExternalToolActions as (session: any, tool: string, args: Record<string, unknown>) => any;
-    const externalDraftContext = modules.externalDraftContext as (session: any, live: any) => any;
-    const reviewExternalEditSession = modules.reviewExternalEditSession as (session: any, summary: string) => any;
-    const runAgent = modules.runAgent as (messages: unknown[], context: unknown, onEvent: (event: any) => void, options: unknown) => Promise<unknown>;
-    const getLanguageModel = modules.getLanguageModel as (provider: any, model: string, mode: any) => unknown;
-    const normalizeLlmProvider = modules.normalizeLlmProvider as (value: unknown) => string;
-    const config = llmConfig(projectId, normalizeLlmProvider);
+    const config = llmConfig(projectId);
     if (!config) throw new Error('LLM_NOT_CONFIGURED');
     const session = createExternalEditSession(doc, 'External Agent', 'manual');
     const live = {
