@@ -56,7 +56,9 @@ export function setLlmProvider(provider: unknown): void {
   setLlmConfig(provider, '');
 }
 
-const ORIGIN = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+const ORIGIN = typeof window !== 'undefined'
+  ? window.location.origin
+  : (process.env.OPENCHATCUT_EDITOR_URL?.trim().replace(/\/+$/, '') || 'http://127.0.0.1:5199');
 // The server proxy target owns the provider/version prefix. AI SDK appends the
 // native operation path, which also supports compatible APIs such as
 // `/v1beta/openai/chat/completions`.

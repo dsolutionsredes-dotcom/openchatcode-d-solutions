@@ -17,6 +17,9 @@ import {
   getLanguageModelProviderOptions,
   protocolForProvider,
   PROVIDER,
+  type ConfiguredLanguageModel,
+  type LlmProvider,
+  type OpenAiApiMode,
 } from './client';
 import { makeMessagesPortable, normalizeLlmMessages } from './messages';
 import { describeTimelineDelta, snapshotTimeline } from './timelineDelta';
@@ -88,12 +91,13 @@ function toolModelOutput(output: unknown): ToolResultOutput {
   return { type: 'text', value };
 }
 
-function createAgentTools(
+export function createAgentTools(
   ctx: AgentContext,
   onEvent: (event: AgentEvent) => void,
   settings: ReturnType<typeof loadAgentSettings>,
   onSkillGuard?: (info: { skill: GenerationGuardSkill; tool: string }) => Promise<GuardDecision>,
   onFollowup?: () => void,
+  allowTool?: (name: string) => boolean,
 ): ToolSet {
   return Object.fromEntries(TOOL_SCHEMAS.map((schema) => [
     schema.name,
@@ -104,6 +108,11 @@ function createAgentTools(
       ),
       execute: async (input) => {
         const args = input ?? {};
+        if (allowTool && !allowTool(schema.name)) {
+          const failed = { error: 'TOOL_NOT_SUPPORTED_ON_SERVER' };
+          onEvent({ type: 'tool', name: schema.name, args, result: failed });
+          return failed;
+        }
         const guardSkill = settings.skillGuard ? generationSkillForTool(schema.name) : null;
         if (guardSkill && onSkillGuard) {
           const decision = await onSkillGuard({ skill: guardSkill, tool: schema.name });
@@ -159,6 +168,11 @@ export async function runAgent(
     askOnly?: boolean;
     signal?: AbortSignal;
     onSkillGuard?: (info: { skill: GenerationGuardSkill; tool: string }) => Promise<GuardDecision>;
+    /** Server callers can reuse the runtime while providing their configured /llm model. */
+    model?: ConfiguredLanguageModel;
+    provider?: LlmProvider;
+    openAiApiMode?: OpenAiApiMode;
+    allowTool?: (name: string) => boolean;
   },
 ): Promise<LLMMessage[]> {
   const conv = normalizeLlmMessages(messages);
@@ -195,18 +209,21 @@ export async function runAgent(
           settings,
           opts?.onSkillGuard,
           () => { askedFollowup = true; },
+          opts?.allowTool,
         );
 
     try {
       // Responses relays do not consistently persist `rs_*` item IDs. Keep
       // OpenAI turns stateless by replaying portable local history and asking
       // the provider not to store the response.
-      const requestMessages = protocolForProvider(PROVIDER) === 'openai'
+      const provider = opts?.provider ?? PROVIDER;
+      const openAiApiMode = opts?.openAiApiMode;
+      const requestMessages = protocolForProvider(provider) === 'openai'
         ? makeMessagesPortable(conv)
         : conv;
-      const providerOptions = getLanguageModelProviderOptions();
+      const providerOptions = getLanguageModelProviderOptions(provider, openAiApiMode);
       const result = streamText({
-        model: getLanguageModel(),
+        model: opts?.model ?? getLanguageModel(provider, undefined, openAiApiMode),
         system,
         messages: requestMessages,
         tools,

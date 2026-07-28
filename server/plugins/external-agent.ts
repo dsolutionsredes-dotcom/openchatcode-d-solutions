@@ -101,7 +101,11 @@ export function externalAgentPlugin(): Plugin {
     name: 'openchatcut-external-agent',
     configureServer(server) {
       server.middlewares.use('/api/external', (req, res) => {
-        void handleExternalProjectsRequest(req, res).catch((error) => {
+        void handleExternalProjectsRequest(req, res, async () => ({
+          ...await server.ssrLoadModule('/src/agent/external-edit-session.ts'),
+          ...await server.ssrLoadModule('/src/agent/runtime.ts'),
+          ...await server.ssrLoadModule('/src/agent/client.ts'),
+        })).catch((error) => {
           if (!res.headersSent) sendJson(res, 500, { error: 'external projects request failed' });
           server.config.logger.error(`[external-api] ${error instanceof Error ? error.message : 'request failed'}`);
         });

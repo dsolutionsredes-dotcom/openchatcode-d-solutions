@@ -79,6 +79,14 @@ export async function getExternalProject(projectId: string): Promise<ProjectMeta
   return (await listExternalProjects()).find((project) => project.id === projectId);
 }
 
+/** Load the persisted document used by the editor; callers must still treat it as immutable. */
+export async function loadExternalProjectDoc(projectId: string): Promise<StoredProjectDoc | undefined> {
+  const store = await readStore();
+  const meta = projectMetas(store.entries.projects).find((project) => project.id === projectId && !project.deletedAt);
+  const doc = store.entries[`project:${projectId}`];
+  return meta && isProjectDoc(doc) ? doc : undefined;
+}
+
 function isProjectDoc(value: unknown): value is StoredProjectDoc {
   return !!value
     && typeof value === 'object'
