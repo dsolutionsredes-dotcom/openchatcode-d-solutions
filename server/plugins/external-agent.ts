@@ -7,6 +7,7 @@ import {
   type ExternalToolSchema,
 } from '../external-agent/broker.ts';
 import { handleMcpRequest, mcpTools } from '../external-agent/mcp.ts';
+import { handleExternalProjectsRequest } from '../external-api/projects.ts';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -99,6 +100,12 @@ export function externalAgentPlugin(): Plugin {
   return {
     name: 'openchatcut-external-agent',
     configureServer(server) {
+      server.middlewares.use('/api/external', (req, res) => {
+        void handleExternalProjectsRequest(req, res).catch((error) => {
+          if (!res.headersSent) sendJson(res, 500, { error: 'external projects request failed' });
+          server.config.logger.error(`[external-api] ${error instanceof Error ? error.message : 'request failed'}`);
+        });
+      });
       server.middlewares.use('/api/external-agent', (req, res) => {
         void handleBridge(req, res).catch((error) => {
           if (!res.headersSent) sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });

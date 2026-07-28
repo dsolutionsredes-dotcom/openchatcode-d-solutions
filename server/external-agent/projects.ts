@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
 
-interface ProjectMeta {
+export interface ProjectMeta {
   id: string;
   name: string;
   updatedAt: number;
@@ -55,6 +55,10 @@ export async function listExternalProjects(includeDeleted = false): Promise<Proj
   return projectMetas(store.entries.projects)
     .filter((project) => includeDeleted || !project.deletedAt)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function getExternalProject(projectId: string): Promise<ProjectMeta | undefined> {
+  return (await listExternalProjects()).find((project) => project.id === projectId);
 }
 
 export async function createExternalProject(
