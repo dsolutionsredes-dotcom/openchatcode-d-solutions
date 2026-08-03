@@ -3,7 +3,7 @@
 // cross this module's API boundary into HTTP responses or logs.
 import { getKey, type KeyName } from './keystore.ts';
 import { resolveLlmProviderConfig } from './llm-config.ts';
-import { normalizeOpenAiApiMode, type LlmProvider, type OpenAiApiMode } from '../shared/llm-providers.ts';
+import { normalizeLlmProvider, normalizeOpenAiApiMode, LLM_PROVIDER_PRESETS, type LlmProvider, type OpenAiApiMode } from '../shared/llm-providers.ts';
 
 export const PROVIDER_CATEGORIES = [
   'agent-brain', 'image', 'voice', 'video', 'music', 'transcription',
@@ -49,4 +49,17 @@ export function resolveProviderConfig(request: ProviderConfigRequest): AgentBrai
 /** Configuration is usable only when the category's required secret is present. */
 export function hasProviderCredentials(config: AgentBrainProviderConfig | undefined): config is AgentBrainProviderConfig {
   return !!config?.apiKey;
+}
+
+export type AgentProviderResolution = { selected: boolean; configs: AgentBrainProviderConfig[] };
+
+export function resolveAgentBrainProviders(): AgentProviderResolution {
+  const active = readKey('AGENT_ACTIVE_PROVIDER') || readKey('LLM_PROVIDER');
+  if (!active || !LLM_PROVIDER_PRESETS.some((preset) => preset.id === active)) return { selected: false, configs: [] };
+  const fallback = readKey('AGENT_FALLBACK_PROVIDERS').split(',').map((value) => value.trim()).filter(Boolean);
+  const providers = [...new Set([active, ...fallback])].filter((value) => LLM_PROVIDER_PRESETS.some((preset) => preset.id === value));
+  const activeModel = readKey('AGENT_ACTIVE_MODEL');
+  return { selected: true, configs: providers.map((provider, index) => resolveProviderConfig({
+    category: 'agent-brain', provider: normalizeLlmProvider(provider), model: index === 0 ? activeModel : undefined,
+  })!) };
 }

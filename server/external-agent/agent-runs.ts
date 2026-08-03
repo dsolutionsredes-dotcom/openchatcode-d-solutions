@@ -4,7 +4,7 @@ import { loadExternalProjectDoc } from './projects.ts';
 import { createExternalEditSession, captureExternalToolActions, externalDraftContext, reviewExternalEditSession } from '../../src/agent/external-edit-session.ts';
 import { runAgent } from '../../src/agent/runtime.ts';
 import { getLanguageModel } from '../../src/agent/client.ts';
-import { hasProviderCredentials, resolveProviderConfig } from '../provider-config.ts';
+import { hasProviderCredentials, resolveAgentBrainProviders } from '../provider-config.ts';
 
 const RUNS_KEY = 'jobs:agent-runs';
 
@@ -16,6 +16,9 @@ export interface ExternalAgentRun {
   proposal: unknown | null;
   requiresApproval: boolean;
   error: string | null;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackAttempts?: Array<{ provider: string; model: string }>;
   createdAt: number;
   updatedAt: number;
 }
@@ -68,8 +71,10 @@ export async function createExternalAgentRun(
     };
     await saveRun(run);
     update({ progress: 10, phase: 'running' });
-    const config = resolveProviderConfig({ category: 'agent-brain' });
-    if (!hasProviderCredentials(config)) throw new Error('LLM_NOT_CONFIGURED');
+    const selected = resolveAgentBrainProviders();
+    if (!selected.selected) throw new Error('AGENT_PROVIDER_NOT_SELECTED');
+    const configs = selected.configs.filter(hasProviderCredentials);
+    if (!configs.length) throw new Error('LLM_NOT_CONFIGURED');
     const session = createExternalEditSession(doc, 'External Agent', 'manual');
     const live = {
       commands: session.draft!.commands, getState: session.draft!.getState, getDoc: session.draft!.getDoc,
@@ -78,16 +83,23 @@ export async function createExternalAgentRun(
     const draftContext = externalDraftContext(session, live);
     let currentSession = session;
     const content = references.length ? `${message}\n\n${JSON.stringify({ type: 'chat_context_entry', entries: references })}` : message;
-    await runAgent([{ role: 'user', content }], draftContext, (event) => {
+    for (const [index, config] of configs.entries()) {
+      run.error = null;
+      await runAgent([{ role: 'user', content }], draftContext, (event) => {
       if (event.type === 'text-delta') run.assistantText += event.delta;
       if (event.type === 'tool') currentSession = captureExternalToolActions(currentSession, event.name, event.args as Record<string, unknown>);
       if (event.type === 'error') run.error = event.message;
-    }, {
+      }, {
       model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
       provider: config.provider,
       openAiApiMode: config.openAiApiMode,
       allowTool: (name: string) => SERVER_SAFE_TOOLS.has(name),
-    });
+      });
+      if (!run.error) { run.providerUsed = config.provider; run.modelUsed = config.model; break; }
+      if (index < configs.length - 1) {
+        run.fallbackAttempts = [...(run.fallbackAttempts ?? []), { provider: config.provider, model: config.model }];
+      }
+    }
     if (run.error) throw new Error(run.error);
     if (currentSession.operationCount) {
       const reviewed = reviewExternalEditSession(currentSession, run.assistantText);

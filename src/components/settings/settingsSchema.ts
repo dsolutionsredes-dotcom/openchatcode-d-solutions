@@ -63,7 +63,7 @@ export interface SettingsCategory {
 
 // GET/POST /api/keys 的响应形状 — secret 只回布尔与来源;models 是非密值通道
 // (模型、URL 与路由,未设 = ''),永远不含任何密钥值。
-export interface KeyState { configured: boolean; source: 'env' | 'runtime' | 'none'; }
+export interface KeyState { configured: boolean; source: 'env' | 'persistent' | 'runtime' | 'none'; }
 export interface KeyStatusResponse {
   keys: Record<string, KeyState>;
   caps: Record<string, boolean>;
@@ -122,6 +122,7 @@ const llmPage = (preset: (typeof LLM_PROVIDER_PRESETS)[number]): SettingsVendorP
         note: '测试连接后可直接选择接口返回的模型，也可以手动填写模型 ID。',
         options: [{ value: preset.defaultModel, label: preset.defaultModel }],
       },
+      text('AGENT_FALLBACK_PROVIDERS', 'Fallbacks ordenados', 'gemini,openrouter', 'IDs de proveedores separados por comas; se prueban en ese orden tras el principal.'),
     ],
   };
 };
@@ -143,6 +144,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     groups: [
       { key: 'llm', title: 'Agent 大脑',
         hint: '对话与工具调用的核心，未配置无法对话。',
+        route: routeSelect('AGENT_ACTIVE_PROVIDER', LLM_PROVIDER_PRESETS.map((preset) => ({ value: preset.id, label: preset.label }))),
         vendors: LLM_PROVIDER_PRESETS.map(llmPage) },
     ],
   },
