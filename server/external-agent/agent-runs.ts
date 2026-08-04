@@ -75,19 +75,21 @@ export async function createExternalAgentRun(
     if (!selected.selected) throw new Error('AGENT_PROVIDER_NOT_SELECTED');
     const configs = selected.configs.filter(hasProviderCredentials);
     if (!configs.length) throw new Error('LLM_NOT_CONFIGURED');
-    const session = createExternalEditSession(doc, 'External Agent', 'manual');
-    const live = {
-      commands: session.draft!.commands, getState: session.draft!.getState, getDoc: session.draft!.getDoc,
-      getCreativeMode: () => null, templates: [], audio: [], getProjectId: () => projectId,
-    };
-    const draftContext = externalDraftContext(session, live);
-    let currentSession = session;
+    let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
     const content = references.length ? `${message}\n\n${JSON.stringify({ type: 'chat_context_entry', entries: references })}` : message;
     for (const [index, config] of configs.entries()) {
       run.error = null;
+      run.assistantText = '';
+      const session = createExternalEditSession(doc, 'External Agent', 'manual');
+      const live = {
+        commands: session.draft!.commands, getState: session.draft!.getState, getDoc: session.draft!.getDoc,
+        getCreativeMode: () => null, templates: [], audio: [], getProjectId: () => projectId,
+      };
+      const draftContext = externalDraftContext(session, live);
+      let attemptSession = session;
       await runAgent([{ role: 'user', content }], draftContext, (event) => {
       if (event.type === 'text-delta') run.assistantText += event.delta;
-      if (event.type === 'tool') currentSession = captureExternalToolActions(currentSession, event.name, event.args as Record<string, unknown>);
+      if (event.type === 'tool') attemptSession = captureExternalToolActions(attemptSession, event.name, event.args as Record<string, unknown>);
       if (event.type === 'error') run.error = event.message;
       }, {
       model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
@@ -95,13 +97,13 @@ export async function createExternalAgentRun(
       openAiApiMode: config.openAiApiMode,
       allowTool: (name: string) => SERVER_SAFE_TOOLS.has(name),
       });
-      if (!run.error) { run.providerUsed = config.provider; run.modelUsed = config.model; break; }
+      if (!run.error) { currentSession = attemptSession; run.providerUsed = config.provider; run.modelUsed = config.model; break; }
       if (index < configs.length - 1) {
         run.fallbackAttempts = [...(run.fallbackAttempts ?? []), { provider: config.provider, model: config.model }];
       }
     }
     if (run.error) throw new Error(run.error);
-    if (currentSession.operationCount) {
+    if (currentSession?.operationCount) {
       const reviewed = reviewExternalEditSession(currentSession, run.assistantText);
       run = { ...run, proposal: reviewed.proposal, requiresApproval: true };
       await setStoredEntry(`proposal:${projectId}`, reviewed.proposal);

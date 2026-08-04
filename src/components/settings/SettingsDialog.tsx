@@ -273,6 +273,7 @@ function VendorList({ group, activeVendor, onSelectVendor, ctx }: {
   return (
     <div style={vendorCol}>
       {group.route && <div style={routeBox}><FieldRow field={group.route} ctx={ctx} /></div>}
+      {group.routingFields?.map((field) => <div key={field.name} style={routeBox}><FieldRow field={field} ctx={ctx} /></div>)}
       {group.vendors.map((p) => (
         <VendorRow key={p.key} page={p} on={vendorConfigured(ctx.status, p)}
           active={p.key === activeVendor} onSelect={() => onSelectVendor(p.key)} />

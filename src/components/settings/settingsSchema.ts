@@ -51,6 +51,8 @@ export interface SettingsGroup {
   readonly hint: string;
   /** 生成四能力的「默认厂商」路由字段(PREFERRED_*),渲染在中列顶部;缺省不渲染 */
   readonly route?: SettingsField;
+  /** Global configuration for a capability, shown once above vendor cards. */
+  readonly routingFields?: readonly SettingsField[];
   readonly vendors: readonly SettingsVendorPage[];
 }
 
@@ -89,6 +91,12 @@ const routeSelect = (name: string, options: readonly SelectOption[]): SettingsFi
   options: [{ value: '', label: '每次询问（默认）' }, ...options],
 });
 
+const agentProviderSelect = (options: readonly SelectOption[]): SettingsField => ({
+  name: 'AGENT_ACTIVE_PROVIDER', label: 'Proveedor principal', kind: 'select',
+  note: 'Obligatorio para ejecuciones externas; se guarda en el servidor.',
+  options: [{ value: '', label: 'Selecciona un proveedor' }, ...options],
+});
+
 const llmPage = (preset: (typeof LLM_PROVIDER_PRESETS)[number]): SettingsVendorPage => {
   const names = llmProviderConfigNames(preset.id);
   return {
@@ -122,7 +130,6 @@ const llmPage = (preset: (typeof LLM_PROVIDER_PRESETS)[number]): SettingsVendorP
         note: '测试连接后可直接选择接口返回的模型，也可以手动填写模型 ID。',
         options: [{ value: preset.defaultModel, label: preset.defaultModel }],
       },
-      text('AGENT_FALLBACK_PROVIDERS', 'Fallbacks ordenados', 'gemini,openrouter', 'IDs de proveedores separados por comas; se prueban en ese orden tras el principal.'),
     ],
   };
 };
@@ -144,7 +151,11 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     groups: [
       { key: 'llm', title: 'Agent 大脑',
         hint: '对话与工具调用的核心，未配置无法对话。',
-        route: routeSelect('AGENT_ACTIVE_PROVIDER', LLM_PROVIDER_PRESETS.map((preset) => ({ value: preset.id, label: preset.label }))),
+        route: agentProviderSelect(LLM_PROVIDER_PRESETS.map((preset) => ({ value: preset.id, label: preset.label }))),
+        routingFields: [
+          modelText('AGENT_ACTIVE_MODEL', 'Modelo principal', 'Modelo configurado del proveedor principal', 'Vacío: usa LLM_<PROVEEDOR>_MODEL.'),
+          modelText('AGENT_FALLBACK_PROVIDERS', 'Fallbacks ordenados', 'Sin fallbacks', 'IDs separados por comas, en orden. Ejemplo: gemini,openrouter.'),
+        ],
         vendors: LLM_PROVIDER_PRESETS.map(llmPage) },
     ],
   },

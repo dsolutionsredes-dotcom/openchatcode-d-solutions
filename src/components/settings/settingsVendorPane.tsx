@@ -140,7 +140,7 @@ export function FieldRow({ field, ctx }: { field: SettingsField; ctx: FieldCtx }
       <span style={fieldHead}>
         <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
           {t(field.label)}
-          {configured && <span style={sourceTag}>{st?.source === 'env' ? '.env.local' : t('本次设置')}</span>}
+          {configured && <span style={sourceTag}>{st?.source === 'env' ? '.env.local' : st?.source === 'persistent' ? t('Guardado en servidor') : t('This session')}</span>}
         </span>
         {clearable && (
           <button type="button" onClick={(e) => { e.preventDefault(); onToggleClear(field.name); }}
