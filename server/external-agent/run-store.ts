@@ -7,6 +7,8 @@ export type ExternalApprovalStatus = 'pending' | 'applied' | 'rejected';
 export interface ExternalAgentRun {
   runId: string;
   projectId: string;
+  /** Stable caller conversation identity, for example telegram:<chatId>. */
+  conversationId?: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed';
   assistantText: string;
   proposal: Proposal | null;

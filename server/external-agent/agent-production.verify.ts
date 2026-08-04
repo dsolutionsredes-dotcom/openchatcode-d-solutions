@@ -13,21 +13,21 @@ class ResponseCapture {
 }
 
 process.env.OPENCHATCUT_EXTERNAL_API_KEY = 'production-test-key';
-const req = Object.assign(Readable.from([JSON.stringify({ message: 'cambia el formato', references: [] })]), {
+const req = Object.assign(Readable.from([JSON.stringify({ message: 'cambia el formato', references: [], conversationId: 'telegram:42' })]), {
   method: 'POST', url: '/projects/project-1/agent/messages', headers: { 'x-api-key': 'production-test-key' },
 });
 const res = new ResponseCapture();
 let received: unknown[] | undefined;
 await handleExternalProjectsRequest(req as never, res as unknown as ServerResponse, {
-  createRun: async (projectId, message, references) => {
-    received = [projectId, message, references];
+  createRun: async (projectId, message, references, conversationId) => {
+    received = [projectId, message, references, conversationId];
     return { runId: 'run-production', status: 'queued' };
   },
   getRun: async () => undefined,
   applyRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'applied', appliedOperationCount: 1, idempotent: false, updatedAt: new Date(0).toISOString() }),
   rejectRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'rejected', appliedOperationCount: 0, idempotent: false, updatedAt: new Date(0).toISOString() }),
 });
-assert.deepEqual(received, ['project-1', 'cambia el formato', []]);
+assert.deepEqual(received, ['project-1', 'cambia el formato', [], 'telegram:42']);
 assert.equal(res.statusCode, 202);
 assert.deepEqual(JSON.parse(res.body), { runId: 'run-production', status: 'queued' });
 

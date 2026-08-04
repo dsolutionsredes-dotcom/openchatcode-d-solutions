@@ -7,6 +7,8 @@ import { hasProviderCredentials, resolveAgentBrainProviders } from '../provider-
 import type { MediaAsset } from '../../src/editor/types.ts';
 import { isExternalAgentToolAllowed, prepareExternalAgentInput } from './asset-input.ts';
 import { loadExternalAgentRun, saveExternalAgentRun, type ExternalAgentRun } from './run-store.ts';
+import { loadExternalConversation, saveExternalConversation, type ExternalConversation } from './conversation-store.ts';
+import type { LLMMessage } from '../../src/agent/runtime.ts';
 
 export type { ExternalAgentRun } from './run-store.ts';
 
@@ -26,21 +28,40 @@ export async function createExternalAgentRun(
   projectId: string,
   message: string,
   references: unknown[],
+  conversationId = `external:${projectId}`,
 ): Promise<ExternalAgentRun> {
   const doc = await loadExternalProjectDoc(projectId);
   if (!doc) throw new Error('PROJECT_NOT_FOUND');
   const initial = createGenerationJob({ kind: 'external-agent', projectId }, async (runId, update) => {
     let run: ExternalAgentRun = {
-      runId, projectId, status: 'running', assistantText: '', proposal: null,
+      runId, projectId, conversationId, status: 'running', assistantText: '', proposal: null,
       requiresApproval: false, error: null, createdAt: Date.now(), updatedAt: Date.now(),
     };
     await saveExternalAgentRun(run);
     update({ progress: 10, phase: 'running' });
     let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
     const prepared = prepareExternalAgentInput(message, doc.assets as MediaAsset[], references);
+    const previous = await loadExternalConversation(projectId, conversationId);
+    const now = Date.now();
+    const conversation: ExternalConversation = previous ?? {
+      projectId, conversationId, messages: [], llm: [], createdAt: now, updatedAt: now,
+    };
+    const appendConversation = async (llm: unknown[], assistantText: string, error?: string | null) => {
+      await saveExternalConversation({
+        ...conversation,
+        llm,
+        messages: [
+          ...conversation.messages,
+          { role: 'user', text: message },
+          ...(assistantText ? [{ role: error ? 'error' as const : 'assistant' as const, text: assistantText }] : []),
+        ],
+        updatedAt: Date.now(),
+      });
+    };
     if (prepared.clarification) {
       run = { ...run, status: 'succeeded', assistantText: prepared.clarification, updatedAt: Date.now() };
       await saveExternalAgentRun(run);
+      await appendConversation(conversation.llm, run.assistantText);
       update({ progress: 100, phase: 'completed' });
       return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
     }
@@ -59,7 +80,8 @@ export async function createExternalAgentRun(
       };
       const draftContext = externalDraftContext(session, live);
       let attemptSession = session;
-      await runAgent([{ role: 'user', content }], draftContext, (event) => {
+      const history = [...conversation.llm, { role: 'user' as const, content }] as LLMMessage[];
+      const resultMessages = await runAgent(history, draftContext, (event) => {
       if (event.type === 'text-delta') run.assistantText += event.delta;
       if (event.type === 'tool') attemptSession = captureExternalToolActions(attemptSession, event.name, event.args as Record<string, unknown>);
       if (event.type === 'error') run.error = event.message;
@@ -69,7 +91,13 @@ export async function createExternalAgentRun(
       openAiApiMode: config.openAiApiMode,
       allowTool: isExternalAgentToolAllowed,
       });
-      if (!run.error) { currentSession = attemptSession; run.providerUsed = config.provider; run.modelUsed = config.model; break; }
+      if (!run.error) {
+        currentSession = attemptSession;
+        run.providerUsed = config.provider;
+        run.modelUsed = config.model;
+        await appendConversation(resultMessages, run.assistantText);
+        break;
+      }
       if (index < configs.length - 1) {
         run.fallbackAttempts = [...(run.fallbackAttempts ?? []), { provider: config.provider, model: config.model }];
       }
@@ -85,7 +113,7 @@ export async function createExternalAgentRun(
     return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
   });
   const run: ExternalAgentRun = {
-    runId: initial.jobId, projectId, status: 'queued', assistantText: '', proposal: null,
+    runId: initial.jobId, projectId, conversationId, status: 'queued', assistantText: '', proposal: null,
     requiresApproval: false, error: null, createdAt: Date.now(), updatedAt: Date.now(),
   };
   await saveExternalAgentRun(run);

@@ -5,7 +5,7 @@ import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 
 export interface ExternalAgentApi {
-  createRun: (projectId: string, message: string, references: unknown[]) => Promise<{ runId: string; status: string }>;
+  createRun: (projectId: string, message: string, references: unknown[], conversationId?: string) => Promise<{ runId: string; status: string }>;
   getRun: (runId: string) => Promise<unknown | undefined>;
   applyRun: (runId: string) => Promise<unknown>;
   rejectRun: (runId: string) => Promise<unknown>;
@@ -15,6 +15,13 @@ const MAX_BODY_BYTES = 64 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function conversationId(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return /^[a-zA-Z0-9:_-]{1,160}$/.test(normalized) ? normalized : null;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -191,10 +198,12 @@ export async function handleExternalProjectsRequest(
     const message = typeof body.message === 'string' ? body.message.trim() : '';
     if (!message) { sendJson(res, 400, { error: 'message is required' }); return; }
     if (body.references !== undefined && !Array.isArray(body.references)) { sendJson(res, 400, { error: 'references must be an array' }); return; }
+    const callerConversation = conversationId(body.conversationId);
+    if (callerConversation === null) { sendJson(res, 400, { error: 'conversationId is invalid' }); return; }
     const projectId = decodeURIComponent(agentMessage[1]);
     try {
       if (!agentApi) throw new Error('agent runtime unavailable');
-      const run = await agentApi.createRun(projectId, message, Array.isArray(body.references) ? body.references : []);
+      const run = await agentApi.createRun(projectId, message, Array.isArray(body.references) ? body.references : [], callerConversation);
       sendJson(res, 202, { runId: run.runId, status: run.status });
     } catch (error) {
       if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') sendJson(res, 404, { error: 'project not found' });
