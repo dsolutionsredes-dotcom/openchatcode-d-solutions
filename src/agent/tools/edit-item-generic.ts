@@ -9,6 +9,7 @@ import { defaultTrackId, resolveTrackId } from '../../editor/types';
 import { isValidEasing } from '../../editor/keyframes';
 import { getKeyframePropertyDefinition, KEYFRAME_PROPS, supportsKeyframeProperty } from '../../editor/keyframeRegistry';
 import { resolveTimelineItem } from './timeline-item-resolver';
+import { resolveAssetReference } from '../asset-resolver';
 
 type OpResult = Record<string, unknown>;
 
@@ -228,13 +229,12 @@ export function validateGenericAdd(
   if (unknown) return { error: unknown };
   const q = String(entry.assetId ?? '').trim();
   if (!q) return { error: `${type} add needs assetId (a pool asset id/prefix; see manage_media_pool action=list)` };
-  const exact = assets.find((a) => a.id === q);
-  const hits = exact ? [exact] : assets.filter((a) => a.id.startsWith(q));
-  if (hits.length === 0) return { error: `no pool asset matching "${q}"`, hint: 'manage_media_pool action=list shows asset ids/names' };
-  if (hits.length > 1) {
-    return { error: `ambiguous asset prefix "${q}"`, candidates: hits.slice(0, 6).map((a) => ({ id: a.id, name: a.name, kind: a.kind })) };
+  const resolved = resolveAssetReference(assets, q, { kind: type as MediaAsset['kind'] });
+  if (resolved.status === 'not_found') return { error: `no pool asset matching "${q}"`, hint: 'manage_media_pool action=list shows asset ids/names' };
+  if (resolved.status === 'ambiguous') {
+    return { error: `ambiguous asset reference "${q}"`, candidates: resolved.candidates.slice(0, 6).map((a) => ({ id: a.id, name: a.name, kind: a.kind })) };
   }
-  const asset = hits[0]!;
+  const asset = resolved.asset;
   if (asset.kind !== type) return { error: `asset ${asset.id} is kind=${asset.kind}, not ${type} — pass type:"${asset.kind}"` };
 
   const family = type === 'audio' ? 'audio' : 'video';

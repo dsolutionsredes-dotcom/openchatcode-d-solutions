@@ -5,6 +5,8 @@ import { createExternalEditSession, captureExternalToolActions, externalDraftCon
 import { runAgent } from '../../src/agent/runtime.ts';
 import { getLanguageModel } from '../../src/agent/client.ts';
 import { hasProviderCredentials, resolveAgentBrainProviders } from '../provider-config.ts';
+import type { MediaAsset } from '../../src/editor/types.ts';
+import { isExternalAgentToolAllowed, prepareExternalAgentInput } from './asset-input.ts';
 
 const RUNS_KEY = 'jobs:agent-runs';
 
@@ -51,12 +53,6 @@ export async function getExternalAgentRun(runId: string): Promise<ExternalAgentR
   return status === run.status ? run : { ...run, status, error: job.error ?? run.error, updatedAt: job.updatedAt };
 }
 
-const SERVER_SAFE_TOOLS = new Set([
-  'read_timeline', 'set_aspect_ratio', 'move_item', 'set_item_timing', 'duplicate_item',
-  'remove_item', 'split_item', 'clear_timeline', 'update_item_props', 'edit_item',
-  'edit_track', 'manage_timelines', 'manage_media_pool', 'edit_project', 'edit_captions',
-]);
-
 export async function createExternalAgentRun(
   projectId: string,
   message: string,
@@ -71,12 +67,19 @@ export async function createExternalAgentRun(
     };
     await saveRun(run);
     update({ progress: 10, phase: 'running' });
+    let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
+    const prepared = prepareExternalAgentInput(message, doc.assets as MediaAsset[], references);
+    if (prepared.clarification) {
+      run = { ...run, status: 'succeeded', assistantText: prepared.clarification, updatedAt: Date.now() };
+      await saveRun(run);
+      update({ progress: 100, phase: 'completed' });
+      return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
+    }
+    const content = prepared.content!;
     const selected = resolveAgentBrainProviders();
     if (!selected.selected) throw new Error('AGENT_PROVIDER_NOT_SELECTED');
     const configs = selected.configs.filter(hasProviderCredentials);
     if (!configs.length) throw new Error('LLM_NOT_CONFIGURED');
-    let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
-    const content = references.length ? `${message}\n\n${JSON.stringify({ type: 'chat_context_entry', entries: references })}` : message;
     for (const [index, config] of configs.entries()) {
       run.error = null;
       run.assistantText = '';
@@ -95,7 +98,7 @@ export async function createExternalAgentRun(
       model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
       provider: config.provider,
       openAiApiMode: config.openAiApiMode,
-      allowTool: (name: string) => SERVER_SAFE_TOOLS.has(name),
+      allowTool: isExternalAgentToolAllowed,
       });
       if (!run.error) { currentSession = attemptSession; run.providerUsed = config.provider; run.modelUsed = config.model; break; }
       if (index < configs.length - 1) {
