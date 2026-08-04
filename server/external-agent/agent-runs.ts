@@ -1,4 +1,3 @@
-import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { createGenerationJob, getGenerationJobSnapshot } from '../plugins/generation-jobs.ts';
 import { loadExternalProjectDoc } from './projects.ts';
 import { createExternalEditSession, captureExternalToolActions, externalDraftContext, reviewExternalEditSession } from '../../src/agent/external-edit-session.ts';
@@ -7,50 +6,20 @@ import { getLanguageModel } from '../../src/agent/client.ts';
 import { hasProviderCredentials, resolveAgentBrainProviders } from '../provider-config.ts';
 import type { MediaAsset } from '../../src/editor/types.ts';
 import { isExternalAgentToolAllowed, prepareExternalAgentInput } from './asset-input.ts';
+import { loadExternalAgentRun, saveExternalAgentRun, type ExternalAgentRun } from './run-store.ts';
 
-const RUNS_KEY = 'jobs:agent-runs';
-
-export interface ExternalAgentRun {
-  runId: string;
-  projectId: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
-  assistantText: string;
-  proposal: unknown | null;
-  requiresApproval: boolean;
-  error: string | null;
-  providerUsed?: string;
-  modelUsed?: string;
-  fallbackAttempts?: Array<{ provider: string; model: string }>;
-  createdAt: number;
-  updatedAt: number;
-}
-
-function isRun(value: unknown): value is ExternalAgentRun {
-  if (!value || typeof value !== 'object') return false;
-  const run = value as Partial<ExternalAgentRun>;
-  return typeof run.runId === 'string' && typeof run.projectId === 'string'
-    && (run.status === 'queued' || run.status === 'running' || run.status === 'succeeded' || run.status === 'failed')
-    && typeof run.assistantText === 'string' && typeof run.requiresApproval === 'boolean'
-    && (run.error === null || typeof run.error === 'string')
-    && typeof run.createdAt === 'number' && typeof run.updatedAt === 'number';
-}
-
-async function saveRun(run: ExternalAgentRun): Promise<void> {
-  const store = await readStore();
-  const runs = Array.isArray(store.entries[RUNS_KEY]) ? store.entries[RUNS_KEY].filter(isRun) : [];
-  await setStoredEntry(RUNS_KEY, [run, ...runs.filter((item) => item.runId !== run.runId)]);
-}
+export type { ExternalAgentRun } from './run-store.ts';
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
-  const store = await readStore();
-  const run = Array.isArray(store.entries[RUNS_KEY])
-    ? store.entries[RUNS_KEY].filter(isRun).find((item) => item.runId === runId)
-    : undefined;
+  const run = await loadExternalAgentRun(runId);
   if (!run) return undefined;
+  const withApproval = run.approvalStatus ? run : run.requiresApproval
+    ? { ...run, approvalStatus: 'pending' as const }
+    : run;
   const job = getGenerationJobSnapshot(runId);
-  if (!job) return run;
+  if (!job) return withApproval;
   const status = job.status;
-  return status === run.status ? run : { ...run, status, error: job.error ?? run.error, updatedAt: job.updatedAt };
+  return status === withApproval.status ? withApproval : { ...withApproval, status, error: job.error ?? withApproval.error, updatedAt: job.updatedAt };
 }
 
 export async function createExternalAgentRun(
@@ -65,13 +34,13 @@ export async function createExternalAgentRun(
       runId, projectId, status: 'running', assistantText: '', proposal: null,
       requiresApproval: false, error: null, createdAt: Date.now(), updatedAt: Date.now(),
     };
-    await saveRun(run);
+    await saveExternalAgentRun(run);
     update({ progress: 10, phase: 'running' });
     let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
     const prepared = prepareExternalAgentInput(message, doc.assets as MediaAsset[], references);
     if (prepared.clarification) {
       run = { ...run, status: 'succeeded', assistantText: prepared.clarification, updatedAt: Date.now() };
-      await saveRun(run);
+      await saveExternalAgentRun(run);
       update({ progress: 100, phase: 'completed' });
       return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
     }
@@ -108,11 +77,10 @@ export async function createExternalAgentRun(
     if (run.error) throw new Error(run.error);
     if (currentSession?.operationCount) {
       const reviewed = reviewExternalEditSession(currentSession, run.assistantText);
-      run = { ...run, proposal: reviewed.proposal, requiresApproval: true };
-      await setStoredEntry(`proposal:${projectId}`, reviewed.proposal);
+      run = { ...run, proposal: reviewed.proposal, requiresApproval: true, approvalStatus: 'pending' };
     }
     run = { ...run, status: 'succeeded', updatedAt: Date.now() };
-    await saveRun(run);
+    await saveExternalAgentRun(run);
     update({ progress: 100, phase: 'completed' });
     return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
   });
@@ -120,6 +88,6 @@ export async function createExternalAgentRun(
     runId: initial.jobId, projectId, status: 'queued', assistantText: '', proposal: null,
     requiresApproval: false, error: null, createdAt: Date.now(), updatedAt: Date.now(),
   };
-  await saveRun(run);
+  await saveExternalAgentRun(run);
   return run;
 }

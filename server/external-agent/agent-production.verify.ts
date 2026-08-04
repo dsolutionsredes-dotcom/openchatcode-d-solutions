@@ -24,6 +24,8 @@ await handleExternalProjectsRequest(req as never, res as unknown as ServerRespon
     return { runId: 'run-production', status: 'queued' };
   },
   getRun: async () => undefined,
+  applyRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'applied', appliedOperationCount: 1, idempotent: false, updatedAt: new Date(0).toISOString() }),
+  rejectRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'rejected', appliedOperationCount: 0, idempotent: false, updatedAt: new Date(0).toISOString() }),
 });
 assert.deepEqual(received, ['project-1', 'cambia el formato', []]);
 assert.equal(res.statusCode, 202);

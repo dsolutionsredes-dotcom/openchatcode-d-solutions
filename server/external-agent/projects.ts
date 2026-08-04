@@ -116,6 +116,19 @@ export async function addExternalProjectAsset(
   return asset;
 }
 
+/** Persist a complete ProjectDoc produced by an approved external proposal. */
+export async function saveExternalProjectDoc(projectId: string, doc: StoredProjectDoc): Promise<boolean> {
+  const store = await readStore();
+  const metas = projectMetas(store.entries.projects);
+  if (!metas.some((project) => project.id === projectId && !project.deletedAt) || !isProjectDoc(doc)) return false;
+  const updatedAt = Date.now();
+  await setStoredEntry(`project:${projectId}`, doc);
+  await setStoredEntry('projects', metas.map((project) => (
+    project.id === projectId ? { ...project, updatedAt } : project
+  )));
+  return true;
+}
+
 export async function createExternalProject(
   args: Record<string, unknown>,
 ): Promise<ProjectMeta> {

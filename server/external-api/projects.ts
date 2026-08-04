@@ -7,6 +7,8 @@ import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 export interface ExternalAgentApi {
   createRun: (projectId: string, message: string, references: unknown[]) => Promise<{ runId: string; status: string }>;
   getRun: (runId: string) => Promise<unknown | undefined>;
+  applyRun: (runId: string) => Promise<unknown>;
+  rejectRun: (runId: string) => Promise<unknown>;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -20,6 +22,14 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
   res.end(JSON.stringify(body));
+}
+
+function approvalErrorStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as Error & { code?: string }).code;
+  return code === 'RUN_NOT_FOUND' ? 404
+    : code === 'PROPOSAL_NOT_PENDING' || code === 'PROPOSAL_STALE' || code === 'APPROVAL_CONFLICT' ? 409
+      : undefined;
 }
 
 function headerValue(req: IncomingMessage, name: string): string | undefined {
@@ -152,6 +162,27 @@ export async function handleExternalProjectsRequest(
     const run = await agentApi?.getRun(decodeURIComponent(agentRun[1]));
     if (!run) { sendJson(res, 404, { error: 'run not found' }); return; }
     sendJson(res, 200, run);
+    return;
+  }
+  const agentApproval = url.pathname.match(/^\/agent\/runs\/([^/]+)\/(apply|reject)$/);
+  if (req.method === 'POST' && agentApproval) {
+    const runId = decodeURIComponent(agentApproval[1]);
+    try {
+      if (!agentApi) throw new Error('agent runtime unavailable');
+      const result = agentApproval[2] === 'apply'
+        ? await agentApi.applyRun(runId)
+        : await agentApi.rejectRun(runId);
+      sendJson(res, 200, result);
+    } catch (error) {
+      const status = approvalErrorStatus(error);
+      if (status) sendJson(res, status, {
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string'
+          ? { code: (error as Error & { code: string }).code }
+          : {}),
+      });
+      else throw error;
+    }
     return;
   }
   const agentMessage = url.pathname.match(/^\/projects\/([^/]+)\/agent\/messages$/);

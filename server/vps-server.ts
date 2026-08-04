@@ -10,6 +10,7 @@ import { parseEnvText } from '../desktop/env-file.ts';
 import { createMiniConnect } from '../desktop/mini-connect.ts';
 import { distStaticMiddleware, uploadsMiddleware } from '../desktop/static-files.ts';
 import { createExternalAgentRun, getExternalAgentRun } from './external-agent/agent-runs.ts';
+import { applyExternalAgentRun, rejectExternalAgentRun } from './external-agent/approvals.ts';
 
 const HOST = '0.0.0.0';
 const PORT = 5199;
@@ -71,6 +72,8 @@ export async function startVpsServer(
   for (const plugin of serverPlugins({ externalAgentApi: {
     createRun: createExternalAgentRun,
     getRun: getExternalAgentRun,
+    applyRun: applyExternalAgentRun,
+    rejectRun: rejectExternalAgentRun,
   } })) {
     const hook = plugin.configureServer;
     const fn = typeof hook === 'function' ? hook : hook?.handler;
