@@ -11,6 +11,7 @@ import { createMiniConnect } from '../desktop/mini-connect.ts';
 import { distStaticMiddleware, uploadsMiddleware } from '../desktop/static-files.ts';
 import { createExternalAgentRun, getExternalAgentRun } from './external-agent/agent-runs.ts';
 import { applyExternalAgentRun, rejectExternalAgentRun } from './external-agent/approvals.ts';
+import { chooseExternalPreview } from './external-agent/preview.ts';
 
 const HOST = '0.0.0.0';
 const PORT = 5199;
@@ -74,6 +75,7 @@ export async function startVpsServer(
     getRun: getExternalAgentRun,
     applyRun: applyExternalAgentRun,
     rejectRun: rejectExternalAgentRun,
+    choosePreview: chooseExternalPreview,
   } })) {
     const hook = plugin.configureServer;
     const fn = typeof hook === 'function' ? hook : hook?.handler;

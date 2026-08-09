@@ -9,6 +9,7 @@ export interface ExternalAgentApi {
   getRun: (runId: string) => Promise<unknown | undefined>;
   applyRun: (runId: string) => Promise<unknown>;
   rejectRun: (runId: string) => Promise<unknown>;
+  choosePreview: (runId: string, choice: 'render' | 'schedule' | 'edit') => Promise<unknown>;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -35,7 +36,8 @@ function approvalErrorStatus(error: unknown): number | undefined {
   if (!(error instanceof Error)) return undefined;
   const code = (error as Error & { code?: string }).code;
   return code === 'RUN_NOT_FOUND' ? 404
-    : code === 'PROPOSAL_NOT_PENDING' || code === 'PROPOSAL_STALE' || code === 'APPROVAL_CONFLICT' ? 409
+    : code === 'PROPOSAL_NOT_PENDING' || code === 'PROPOSAL_STALE' || code === 'APPROVAL_CONFLICT'
+      || code === 'PREVIEW_NOT_REQUESTED' || code === 'PREVIEW_CONFLICT' || code === 'PROJECT_EMPTY' ? 409
       : undefined;
 }
 
@@ -188,6 +190,18 @@ export async function handleExternalProjectsRequest(
           ? { code: (error as Error & { code: string }).code }
           : {}),
       });
+      else throw error;
+    }
+    return;
+  }
+  const previewChoice = url.pathname.match(/^\/agent\/runs\/([^/]+)\/preview\/(render|schedule|edit)$/);
+  if (req.method === 'POST' && previewChoice) {
+    try {
+      if (!agentApi) throw new Error('agent runtime unavailable');
+      sendJson(res, 200, await agentApi.choosePreview(decodeURIComponent(previewChoice[1]), previewChoice[2] as 'render' | 'schedule' | 'edit'));
+    } catch (error) {
+      const status = approvalErrorStatus(error);
+      if (status) sendJson(res, status, { error: error instanceof Error ? error.message : String(error), code: (error as { code?: string })?.code });
       else throw error;
     }
     return;

@@ -9,15 +9,17 @@ import { isExternalAgentToolAllowed, prepareExternalAgentInput } from './asset-i
 import { loadExternalAgentRun, saveExternalAgentRun, type ExternalAgentRun } from './run-store.ts';
 import { loadExternalConversation, saveExternalConversation, type ExternalConversation } from './conversation-store.ts';
 import type { LLMMessage } from '../../src/agent/runtime.ts';
+import { isExplicitPreviewRequest, previewPrompt, refreshExternalPreview } from './preview.ts';
 
 export type { ExternalAgentRun } from './run-store.ts';
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
   const run = await loadExternalAgentRun(runId);
   if (!run) return undefined;
-  const withApproval = run.approvalStatus ? run : run.requiresApproval
-    ? { ...run, approvalStatus: 'pending' as const }
-    : run;
+  const withPreview = await refreshExternalPreview(run);
+  const withApproval = withPreview.approvalStatus ? withPreview : withPreview.requiresApproval
+    ? { ...withPreview, approvalStatus: 'pending' as const }
+    : withPreview;
   const job = getGenerationJobSnapshot(runId);
   if (!job) return withApproval;
   const status = job.status;
@@ -58,6 +60,13 @@ export async function createExternalAgentRun(
         updatedAt: Date.now(),
       });
     };
+    if (isExplicitPreviewRequest(message)) {
+      run = { ...run, status: 'succeeded', previewStatus: 'awaiting-choice', assistantText: previewPrompt(), updatedAt: Date.now() };
+      await saveExternalAgentRun(run);
+      await appendConversation([...conversation.llm, { role: 'user', content: message }, { role: 'assistant', content: run.assistantText }], run.assistantText);
+      update({ progress: 100, phase: 'awaiting-preview-choice' });
+      return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
+    }
     if (prepared.clarification) {
       run = { ...run, status: 'succeeded', assistantText: prepared.clarification, updatedAt: Date.now() };
       await saveExternalAgentRun(run);

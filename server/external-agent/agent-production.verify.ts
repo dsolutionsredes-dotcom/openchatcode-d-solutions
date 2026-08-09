@@ -26,10 +26,24 @@ await handleExternalProjectsRequest(req as never, res as unknown as ServerRespon
   getRun: async () => undefined,
   applyRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'applied', appliedOperationCount: 1, idempotent: false, updatedAt: new Date(0).toISOString() }),
   rejectRun: async () => ({ runId: 'run-production', projectId: 'project-1', approvalStatus: 'rejected', appliedOperationCount: 0, idempotent: false, updatedAt: new Date(0).toISOString() }),
+  choosePreview: async (runId, choice) => ({ runId, projectId: 'project-1', previewStatus: choice === 'edit' ? 'editing' : 'scheduled', idempotent: false, updatedAt: new Date(0).toISOString() }),
 });
 assert.deepEqual(received, ['project-1', 'cambia el formato', [], 'telegram:42']);
 assert.equal(res.statusCode, 202);
 assert.deepEqual(JSON.parse(res.body), { runId: 'run-production', status: 'queued' });
+
+const previewReq = Object.assign(Readable.from(['']), {
+  method: 'POST', url: '/agent/runs/run-production/preview/edit', headers: { 'x-api-key': 'production-test-key' },
+});
+const previewRes = new ResponseCapture();
+await handleExternalProjectsRequest(previewReq as never, previewRes as unknown as ServerResponse, {
+  createRun: async () => ({ runId: 'run-production', status: 'queued' }),
+  getRun: async () => undefined,
+  applyRun: async () => ({}),
+  rejectRun: async () => ({}),
+  choosePreview: async (runId, choice) => ({ runId, choice }),
+});
+assert.deepEqual(JSON.parse(previewRes.body), { runId: 'run-production', choice: 'edit' });
 
 const bundle = await readFile(resolve(process.cwd(), 'server-dist/vps-server.mjs'), 'utf8');
 assert.ok(!bundle.includes('ssrLoadModule'), 'production bundle must not depend on Vite SSR APIs');

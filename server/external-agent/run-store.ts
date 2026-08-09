@@ -3,6 +3,7 @@ import { readStore, setStoredEntry } from '../plugins/project-store.ts';
 
 export const EXTERNAL_AGENT_RUNS_KEY = 'jobs:agent-runs';
 export type ExternalApprovalStatus = 'pending' | 'applied' | 'rejected';
+export type ExternalPreviewStatus = 'awaiting-choice' | 'rendering' | 'ready' | 'failed' | 'scheduled' | 'editing';
 
 export interface ExternalAgentRun {
   runId: string;
@@ -15,6 +16,8 @@ export interface ExternalAgentRun {
   requiresApproval: boolean;
   approvalStatus?: ExternalApprovalStatus;
   appliedOperationCount?: number;
+  previewStatus?: ExternalPreviewStatus;
+  preview?: { jobId?: string; status: 'queued' | 'running' | 'ready' | 'failed'; path?: string; sizeBytes?: number; error?: string };
   error: string | null;
   providerUsed?: string;
   modelUsed?: string;
