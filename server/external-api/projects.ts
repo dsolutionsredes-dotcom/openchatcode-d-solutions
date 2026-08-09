@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { addExternalProjectAsset, createExternalProject, getExternalProject, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
+import { getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
 
 export interface ExternalAgentApi {
   createRun: (projectId: string, message: string, references: unknown[], conversationId?: string) => Promise<{ runId: string; status: string }>;
@@ -166,6 +167,26 @@ export async function handleExternalProjectsRequest(
   }
 
   const url = new URL(req.url ?? '/', 'http://localhost');
+  const chatContext = url.pathname.match(/^\/telegram\/chats\/([^/]+)\/project$/);
+  if (chatContext) {
+    const chatId = decodeURIComponent(chatContext[1]);
+    if (req.method === 'GET') {
+      const context = await getChatProjectContext(chatId);
+      if (!context) { sendJson(res, 404, { error: 'active project not selected' }); return; }
+      sendJson(res, 200, { chatId: context.chatId, projectId: context.projectId, projectName: context.project.name, updatedAt: context.updatedAt });
+      return;
+    }
+    if (req.method === 'PUT') {
+      const body = await readJson(req);
+      const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+      const context = await setChatProjectContext(chatId, projectId);
+      if (!context) { sendJson(res, 404, { error: 'project not found or chat id invalid' }); return; }
+      sendJson(res, 200, { chatId: context.chatId, projectId: context.projectId, projectName: context.project.name, updatedAt: context.updatedAt });
+      return;
+    }
+    sendJson(res, 405, { error: 'method not allowed' });
+    return;
+  }
   const agentRun = url.pathname.match(/^\/agent\/runs\/([^/]+)$/);
   if (req.method === 'GET' && agentRun) {
     const run = await agentApi?.getRun(decodeURIComponent(agentRun[1]));

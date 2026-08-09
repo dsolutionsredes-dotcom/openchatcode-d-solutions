@@ -80,6 +80,16 @@ try {
   const missing = await request('GET', '/projects/does-not-exist', 'test-external-project-key');
   assert.equal(missing.statusCode, 404);
 
+  const noContext = await request('GET', '/telegram/chats/telegram%3A42/project', 'test-external-project-key');
+  assert.equal(noContext.statusCode, 404);
+  const selected = await request('PUT', '/telegram/chats/telegram%3A42/project', 'test-external-project-key', { projectId });
+  assert.equal(selected.statusCode, 200);
+  assert.deepEqual(selected.json, {
+    chatId: 'telegram:42', projectId, projectName: 'n8n test project', updatedAt: (selected.json as { updatedAt: number }).updatedAt,
+  });
+  const restored = await request('GET', '/telegram/chats/telegram%3A42/project', 'test-external-project-key');
+  assert.equal((restored.json as { projectId: string }).projectId, projectId, 'chat selection persists in the project store');
+
   const store = await readStore();
   assert.ok(store.entries[`project:${projectId}`], 'project document is persisted in the existing project store');
   assert.equal(
