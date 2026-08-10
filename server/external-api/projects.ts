@@ -4,6 +4,7 @@ import { addExternalProjectAsset, createExternalProject, getExternalProject, lis
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 import { getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
+import { getProjectDriveContext, setProjectDriveContext } from '../external-agent/project-drive-context.ts';
 
 export interface ExternalAgentApi {
   createRun: (projectId: string, message: string, references: unknown[], conversationId?: string) => Promise<{ runId: string; status: string }>;
@@ -182,6 +183,28 @@ export async function handleExternalProjectsRequest(
       const context = await setChatProjectContext(chatId, projectId);
       if (!context) { sendJson(res, 404, { error: 'project not found or chat id invalid' }); return; }
       sendJson(res, 200, { chatId: context.chatId, projectId: context.projectId, projectName: context.project.name, updatedAt: context.updatedAt });
+      return;
+    }
+    sendJson(res, 405, { error: 'method not allowed' });
+    return;
+  }
+  const driveContext = url.pathname.match(/^\/projects\/([^/]+)\/drive-context$/);
+  if (driveContext) {
+    const projectId = decodeURIComponent(driveContext[1]);
+    if (req.method === 'GET') {
+      if (!await getExternalProject(projectId)) { sendJson(res, 404, { error: 'project not found' }); return; }
+      const context = await getProjectDriveContext(projectId);
+      if (!context) { sendJson(res, 404, { error: 'drive folders not configured' }); return; }
+      sendJson(res, 200, context);
+      return;
+    }
+    if (req.method === 'PUT') {
+      const body = await readJson(req);
+      const driveFolderId = typeof body.driveFolderId === 'string' ? body.driveFolderId.trim() : '';
+      const originalsFolderId = typeof body.originalsFolderId === 'string' ? body.originalsFolderId.trim() : '';
+      const context = await setProjectDriveContext(projectId, driveFolderId, originalsFolderId);
+      if (!context) { sendJson(res, 400, { error: 'project or Drive folder id is invalid' }); return; }
+      sendJson(res, 200, context);
       return;
     }
     sendJson(res, 405, { error: 'method not allowed' });

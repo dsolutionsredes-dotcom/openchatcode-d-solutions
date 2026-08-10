@@ -90,6 +90,17 @@ try {
   const restored = await request('GET', '/telegram/chats/telegram%3A42/project', 'test-external-project-key');
   assert.equal((restored.json as { projectId: string }).projectId, projectId, 'chat selection persists in the project store');
 
+  const absentDrive = await request('GET', `/projects/${projectId}/drive-context`, 'test-external-project-key');
+  assert.equal(absentDrive.statusCode, 404);
+  const savedDrive = await request('PUT', `/projects/${projectId}/drive-context`, 'test-external-project-key', {
+    driveFolderId: '1hOnK9wdggJYrGNwOkoDgoWI7WHBM3IWG',
+    originalsFolderId: '18jt5xgUG7Lf5Nu7MzhJv4s6amKi63VM9',
+  });
+  assert.equal(savedDrive.statusCode, 200);
+  const restoredDrive = await request('GET', `/projects/${projectId}/drive-context`, 'test-external-project-key');
+  assert.equal(restoredDrive.statusCode, 200);
+  assert.equal((restoredDrive.json as { originalsFolderId: string }).originalsFolderId, '18jt5xgUG7Lf5Nu7MzhJv4s6amKi63VM9');
+
   const store = await readStore();
   assert.ok(store.entries[`project:${projectId}`], 'project document is persisted in the existing project store');
   assert.equal(
