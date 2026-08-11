@@ -59,8 +59,12 @@ function requestBaseUrl(req: IncomingMessage): string {
   return `${proto}://${host}`;
 }
 
-async function handleBridge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handleBridge(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  if (!authorized(req)) {
+    sendJson(res, 401, { error: 'invalid OpenChatCut MCP token' });
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/register') {
     const body = await readJson(req);
     if (typeof body.projectId !== 'string' || typeof body.editorId !== 'string' || !validTools(body.tools)) {
@@ -84,10 +88,6 @@ async function handleBridge(req: IncomingMessage, res: ServerResponse): Promise<
     const body = await readJson(req);
     if (typeof body.id !== 'string' || typeof body.ok !== 'boolean') throw new Error('invalid tool result');
     sendJson(res, settleEditorCall(body.id, body.ok, body.value) ? 200 : 404, { ok: true });
-    return;
-  }
-  if (!authorized(req)) {
-    sendJson(res, 401, { error: 'invalid OpenChatCut MCP token' });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/tools') {

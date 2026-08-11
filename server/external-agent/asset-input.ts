@@ -1,10 +1,19 @@
 import { resolveAssetReference } from '../../src/agent/asset-resolver.ts';
 import type { MediaAsset } from '../../src/editor/types.ts';
 
-const SERVER_SAFE_TOOLS = new Set([
+/**
+ * Tools that execute against the server-side draft context without a browser,
+ * editor bridge, or relative browser fetch. Mutating tools remain staged by
+ * ExternalEditSession and therefore still require Apply/Reject.
+ */
+export const SERVER_SAFE_TOOLS = new Set([
   'read_timeline', 'read_project', 'set_aspect_ratio', 'move_item', 'set_item_timing', 'duplicate_item',
   'remove_item', 'split_item', 'clear_timeline', 'update_item_props', 'edit_item',
   'edit_track', 'manage_timelines', 'manage_media_pool', 'edit_project', 'edit_captions',
+  'read_transcript', 'find_transcript', 'read_captions', 'clean_script', 'edit_gap', 'delete_text',
+  'manage_effects', 'manage_markers', 'apply_layout', 'list_audio', 'add_audio',
+  'list_templates', 'search_templates', 'add_motion_graphic',
+  'read_script', 'apply_script',
 ]);
 
 export function isExternalAgentToolAllowed(name: string): boolean {

@@ -23,6 +23,20 @@ const ctx = externalDraftContext(session, {
 });
 
 assert.equal(isExternalAgentToolAllowed('read_project'), true, 'external server allows the existing project reader');
+for (const tool of [
+  'read_transcript', 'find_transcript', 'read_captions', 'edit_captions', 'manage_effects',
+  'manage_markers', 'apply_layout', 'list_audio', 'add_audio', 'list_templates',
+  'search_templates', 'add_motion_graphic', 'read_script', 'apply_script',
+]) {
+  assert.equal(isExternalAgentToolAllowed(tool), true, `${tool} is server-safe`);
+}
+for (const tool of [
+  'transcribe_track', 'detect_scenes', 'auto_reframe', 'view_timeline_frames',
+  'submit_render_job', 'submit_video', 'submit_music', 'run_code', 'web_browser',
+  'request_asset_upload_url', 'delete_project',
+]) {
+  assert.equal(isExternalAgentToolAllowed(tool), false, `${tool} remains unavailable server-side`);
+}
 const read = await execReadProjectTool('read_project', { view: 'assets' }, ctx) as { mediaPool: { assets: Array<{ id: string; name: string }> } };
 assert.deepEqual(read.mediaPool.assets.map((asset) => ({ id: asset.id, name: asset.name })), [{ id: banner.id, name: 'Baner.png' }]);
 

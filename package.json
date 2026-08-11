@@ -12,6 +12,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "test:external-agent": "tsx server/external-agent/asset-resolution.verify.ts && tsx server/plugins/external-agent.verify.ts && tsx server/plugins/generation-jobs.persistence.verify.ts",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:vps": "esbuild server/vps-server.ts --bundle --platform=node --format=esm --packages=external --loader:.frag=text --outfile=server-dist/vps-server.mjs",

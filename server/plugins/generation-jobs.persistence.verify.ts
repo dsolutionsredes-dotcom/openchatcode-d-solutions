@@ -67,10 +67,16 @@ try {
     { status: recoveredRunning?.status, phase: recoveredRunning?.phase, error: recoveredRunning?.error },
     { status: 'failed', phase: 'interrupted', error: 'job interrupted by process restart; automatic resume is not supported' },
   );
+  assert.deepEqual(recoveredRunning?.recovery, {
+    action: 'manual-retry-required',
+    safeToResume: false,
+    reason: 'The video task may have external side effects or partial files; retry it explicitly after checking the provider/output.',
+  });
   assert.deepEqual(
     { status: recoveredQueued?.status, phase: recoveredQueued?.phase, error: recoveredQueued?.error },
     { status: 'failed', phase: 'interrupted', error: 'job interrupted by process restart; automatic resume is not supported' },
   );
+  assert.equal(recoveredQueued?.recovery?.action, 'manual-retry-required');
   await flushGenerationJobPersistence();
   console.log('generation job persistence checks passed');
 } finally {

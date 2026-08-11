@@ -34,6 +34,7 @@ interface GenerationJob {
   result?: GenerationResult;
   results?: GenerationResult[];
   error?: string;
+  recovery?: GenerationJobRecovery;
   cleanupResult?: (result: GenerationResult) => Promise<void> | void;
   retentionMs: number;
   expiryTimer?: NodeJS.Timeout;
@@ -58,6 +59,7 @@ export interface GenerationJobSnapshot {
   result?: GenerationResult;
   results?: GenerationResult[];
   error?: string;
+  recovery?: GenerationJobRecovery;
 }
 
 export interface GenerationJobProgress {
@@ -86,8 +88,22 @@ const INTERRUPTION_ERROR = 'job interrupted by process restart; automatic resume
 let persistenceEnabled = false;
 let persistenceWrites = Promise.resolve();
 
+function recoveryFor(type: string): GenerationJobRecovery {
+  return {
+    action: 'manual-retry-required',
+    safeToResume: false,
+    reason: `The ${type} task may have external side effects or partial files; retry it explicitly after checking the provider/output.`,
+  };
+}
+
 function jobType(params: Record<string, unknown>): string {
   return typeof params.kind === 'string' && params.kind.trim() ? params.kind : 'unknown';
+}
+
+export interface GenerationJobRecovery {
+  action: 'manual-retry-required';
+  safeToResume: false;
+  reason: string;
 }
 
 function projectIdOf(params: Record<string, unknown>): string | undefined {
@@ -108,6 +124,7 @@ function snapshotOf(job: GenerationJob): GenerationJobSnapshot {
     result: job.result,
     results: job.results,
     error: job.error,
+    recovery: job.recovery,
   };
 }
 
@@ -183,6 +200,7 @@ export async function initializeGenerationJobStore(force = false): Promise<void>
       result: record.result,
       results: record.results,
       error: interrupted ? INTERRUPTION_ERROR : record.error,
+      recovery: interrupted ? recoveryFor(record.type) : record.recovery,
       retentionMs: MAX_JOB_AGE_MS,
     };
     jobs.set(job.id, job);
@@ -355,6 +373,7 @@ function report(job: GenerationJob, action: ProgressRequest['action']) {
     ...(job.result ? { result: job.result } : {}),
     ...(job.results && job.results.length > 1 ? { results: job.results } : {}),
     ...(job.error ? { error: job.error } : {}),
+    ...(job.recovery ? { recovery: job.recovery } : {}),
   };
 }
 
