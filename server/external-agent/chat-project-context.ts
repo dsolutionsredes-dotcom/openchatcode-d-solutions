@@ -33,3 +33,13 @@ export async function setChatProjectContext(chatId: string, projectId: string): 
   await setStoredEntry(KEY, [next, ...contexts(store.entries[KEY]).filter((item) => item.chatId !== chatId)]);
   return { ...next, project };
 }
+
+export async function clearChatProjectContext(chatId: string): Promise<boolean> {
+  if (!CHAT_ID.test(chatId)) return false;
+  const store = await readStore();
+  const current = contexts(store.entries[KEY]);
+  const remaining = current.filter((item) => item.chatId !== chatId);
+  if (remaining.length === current.length) return true;
+  await setStoredEntry(KEY, remaining);
+  return true;
+}

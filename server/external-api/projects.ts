@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { addExternalProjectAsset, createExternalProject, deleteExternalProject, getExternalProject, getExternalProjectAssetInventory, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
-import { getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
+import { clearChatProjectContext, getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
 import { getProjectDriveContext, setProjectDriveContext } from '../external-agent/project-drive-context.ts';
 
 export interface ExternalAgentApi {
@@ -183,6 +183,14 @@ export async function handleExternalProjectsRequest(
       const context = await setChatProjectContext(chatId, projectId);
       if (!context) { sendJson(res, 404, { error: 'project not found or chat id invalid' }); return; }
       sendJson(res, 200, { chatId: context.chatId, projectId: context.projectId, projectName: context.project.name, updatedAt: context.updatedAt });
+      return;
+    }
+    if (req.method === 'DELETE') {
+      if (!await clearChatProjectContext(chatId)) {
+        sendJson(res, 400, { error: 'chat id invalid' });
+        return;
+      }
+      sendJson(res, 200, { chatId, closed: true });
       return;
     }
     sendJson(res, 405, { error: 'method not allowed' });
