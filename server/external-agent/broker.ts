@@ -105,6 +105,12 @@ export function setTargetProject(projectId: string): void {
   targetProjectId = projectId;
 }
 
+export function clearTargetProject(): string | null {
+  const previous = targetProjectId;
+  targetProjectId = null;
+  return previous;
+}
+
 export function resolveProjectId(requested?: unknown): string {
   if (typeof requested === 'string' && requested.trim()) return requested.trim();
   if (targetProjectId) return targetProjectId;

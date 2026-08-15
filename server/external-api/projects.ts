@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { addExternalProjectAsset, createExternalProject, getExternalProject, listExternalProjects } from '../external-agent/projects.ts';
+import { addExternalProjectAsset, createExternalProject, deleteExternalProject, getExternalProject, getExternalProjectAssetInventory, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 import { getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
@@ -277,8 +277,26 @@ export async function handleExternalProjectsRequest(
 
   const projectId = match[1] ? decodeURIComponent(match[1]) : undefined;
   const isAssetsRoute = url.pathname.endsWith('/assets');
+  if (req.method === 'DELETE' && projectId && !isAssetsRoute) {
+    const deleted = await deleteExternalProject(projectId);
+    if (!deleted) {
+      sendJson(res, 404, { error: 'project not found' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, projectId, permanentlyDeleted: true });
+    return;
+  }
   if (req.method === 'POST' && projectId && isAssetsRoute) {
     await createExternalAsset(req, res, projectId, url);
+    return;
+  }
+  if (req.method === 'GET' && projectId && isAssetsRoute) {
+    const inventory = await getExternalProjectAssetInventory(projectId);
+    if (!inventory) {
+      sendJson(res, 404, { error: 'project not found' });
+      return;
+    }
+    sendJson(res, 200, inventory);
     return;
   }
   if (req.method === 'POST' && !projectId) {

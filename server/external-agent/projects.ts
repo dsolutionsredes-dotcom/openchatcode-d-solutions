@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readStore, setStoredEntry } from '../plugins/project-store.ts';
+import { purgeProjectPermanently, readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
 import type { MediaKind } from '../../shared/media-kind.ts';
 
@@ -66,6 +66,18 @@ export interface ExternalProjectAsset {
   durationInFrames: number;
 }
 
+/**
+ * Read-only asset inventory for external coordinators (such as n8n).
+ * This deliberately exposes only the media-pool fields needed to identify an
+ * asset; it never returns a timeline, chat history, provider settings, or
+ * secrets.
+ */
+export interface ExternalProjectAssetInventory {
+  projectId: string;
+  assets: ExternalProjectAsset[];
+  assetCount: number;
+}
+
 interface StoredProjectDoc {
   version: unknown;
   assets: ExternalProjectAsset[];
@@ -79,12 +91,38 @@ export async function getExternalProject(projectId: string): Promise<ProjectMeta
   return (await listExternalProjects()).find((project) => project.id === projectId);
 }
 
+/** Permanently remove a project and all project-scoped persisted data. */
+export async function deleteExternalProject(projectId: string): Promise<boolean> {
+  const exists = (await listExternalProjects(true)).some((project) => project.id === projectId);
+  if (!exists) return false;
+  await purgeProjectPermanently(projectId);
+  return true;
+}
+
 /** Load the persisted document used by the editor; callers must still treat it as immutable. */
 export async function loadExternalProjectDoc(projectId: string): Promise<StoredProjectDoc | undefined> {
   const store = await readStore();
   const meta = projectMetas(store.entries.projects).find((project) => project.id === projectId && !project.deletedAt);
   const doc = store.entries[`project:${projectId}`];
   return meta && isProjectDoc(doc) ? doc : undefined;
+}
+
+export async function getExternalProjectAssetInventory(
+  projectId: string,
+): Promise<ExternalProjectAssetInventory | undefined> {
+  const doc = await loadExternalProjectDoc(projectId);
+  if (!doc) return undefined;
+  return {
+    projectId,
+    assets: doc.assets.map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      kind: asset.kind,
+      src: asset.src,
+      durationInFrames: asset.durationInFrames,
+    })),
+    assetCount: doc.assets.length,
+  };
 }
 
 function isProjectDoc(value: unknown): value is StoredProjectDoc {

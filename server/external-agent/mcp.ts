@@ -9,13 +9,14 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   connectedProjectIds,
+  clearTargetProject,
   editorStatuses,
   invokeEditorTool,
   registeredTools,
   resolveProjectId,
   setTargetProject,
 } from './broker.ts';
-import { createExternalProject, listExternalProjects } from './projects.ts';
+import { createExternalProject, deleteExternalProject, listExternalProjects } from './projects.ts';
 
 const PROJECT_SELECTOR = {
   type: 'string',
@@ -66,6 +67,18 @@ const CONTROL_TOOLS: Tool[] = [
       required: ['projectId'],
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'close_project',
+    description: 'Clear the currently selected OpenChatCut project without deleting it.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'delete_project',
+    description: 'Permanently delete an OpenChatCut project and all persisted project data. This cannot be undone.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string' } }, required: ['projectId'] },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'get_editor_url',
@@ -127,6 +140,17 @@ async function callControlTool(
     if (!projectId) throw new Error('projectId is required');
     setTargetProject(projectId);
     return { ok: true, projectId, editorUrl: editorUrl(args, projectId, baseUrl) };
+  }
+  if (name === 'close_project') {
+    return { ok: true, closedProjectId: clearTargetProject() };
+  }
+  if (name === 'delete_project') {
+    const projectId = String(args.projectId ?? '').trim();
+    if (!projectId) throw new Error('projectId is required');
+    const deleted = await deleteExternalProject(projectId);
+    if (!deleted) throw new Error(`project not found: ${projectId}`);
+    clearTargetProject();
+    return { ok: true, projectId, permanentlyDeleted: true };
   }
   if (name === 'get_editor_url') {
     const projectId = resolveProjectId(args.projectId);

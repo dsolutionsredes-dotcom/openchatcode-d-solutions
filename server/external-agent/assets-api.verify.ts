@@ -109,6 +109,26 @@ try {
   assert.equal(persisted.src, result.asset.src);
   const diskName = result.asset.src.split('/').pop()!;
   assert.deepEqual(await readFile(join(tempRoot, 'uploads', diskName)), Buffer.from('video bytes'));
+
+  const inventory = await request('GET', `/projects/${projectId}/assets`, {
+    apiKey: 'test-external-assets-key',
+  });
+  assert.equal(inventory.statusCode, 200);
+  assert.deepEqual(inventory.json, {
+    projectId,
+    assets: [{
+      id: result.asset.id,
+      name: 'clip.mp4',
+      kind: 'video',
+      src: result.asset.src,
+      durationInFrames: 150,
+    }],
+    assetCount: 1,
+  }, 'asset inventory exposes only the project media pool');
+  const missingInventory = await request('GET', '/projects/missing-project/assets', {
+    apiKey: 'test-external-assets-key',
+  });
+  assert.equal(missingInventory.statusCode, 404);
   console.log('external assets API checks passed');
 } finally {
   await rm(tempRoot, { recursive: true, force: true });

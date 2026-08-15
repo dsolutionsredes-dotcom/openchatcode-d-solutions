@@ -354,6 +354,22 @@ async function deleteStoredEntry(key: string): Promise<void> {
   }
 }
 
+/** Permanently remove a project's persisted data and metadata. */
+export async function purgeProjectPermanently(id: string): Promise<void> {
+  await ensureStoreReady();
+  const release = await acquireLock();
+  try {
+    await purgeProjectLocked(id);
+    const deleted = await readDeletedProjects();
+    if (Object.hasOwn(deleted, id)) {
+      delete deleted[id];
+      await writeDeletedProjects(deleted);
+    }
+  } finally {
+    await release();
+  }
+}
+
 async function readEntryFile(key: string): Promise<{ found: boolean; value?: unknown }> {
   try {
     return { found: true, value: JSON.parse(await readFile(entryPath(key), 'utf8')) };
