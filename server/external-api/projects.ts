@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { addExternalProjectAsset, createExternalProject, deleteExternalProject, getExternalProject, getExternalProjectAssetInventory, listExternalProjects } from '../external-agent/projects.ts';
+import { addExternalProjectAsset, createExternalProject, deleteExternalProject, deleteExternalProjectAsset, getExternalProject, getExternalProjectAssetInventory, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
 import { clearChatProjectContext, getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
@@ -277,21 +277,42 @@ export async function handleExternalProjectsRequest(
     }
     return;
   }
-  const match = url.pathname.match(/^\/projects(?:\/([^/]+))?(?:\/assets)?$/);
+  const match = url.pathname.match(/^\/projects(?:\/([^/]+)(?:\/assets(?:\/([^/]+))?)?)?$/);
   if (!match) {
     sendJson(res, 404, { error: 'not found' });
     return;
   }
 
   const projectId = match[1] ? decodeURIComponent(match[1]) : undefined;
+  const assetId = match[2] ? decodeURIComponent(match[2]) : undefined;
   const isAssetsRoute = url.pathname.endsWith('/assets');
-  if (req.method === 'DELETE' && projectId && !isAssetsRoute) {
+  if (req.method === 'DELETE' && projectId && !isAssetsRoute && !assetId) {
     const deleted = await deleteExternalProject(projectId);
     if (!deleted) {
       sendJson(res, 404, { error: 'project not found' });
       return;
     }
     sendJson(res, 200, { ok: true, projectId, permanentlyDeleted: true });
+    return;
+  }
+  if (req.method === 'DELETE' && projectId && assetId) {
+    const deleted = await deleteExternalProjectAsset(projectId, assetId);
+    if (!deleted.ok) {
+      if (deleted.code === 'PROJECT_NOT_FOUND') sendJson(res, 404, { error: 'project not found', code: deleted.code });
+      else if (deleted.code === 'ASSET_NOT_FOUND') sendJson(res, 404, { error: 'asset not found', code: deleted.code });
+      else sendJson(res, 409, {
+        error: 'asset is in use by the timeline',
+        code: deleted.code,
+        timelineIds: deleted.timelineIds ?? [],
+      });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      projectId,
+      asset: { id: deleted.asset.id, name: deleted.asset.name, kind: deleted.asset.kind },
+      storage: deleted.storage,
+    });
     return;
   }
   if (req.method === 'POST' && projectId && isAssetsRoute) {

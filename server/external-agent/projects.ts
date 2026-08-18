@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { purgeProjectPermanently, readStore, setStoredEntry } from '../plugins/project-store.ts';
+import { DEFAULT_UPLOAD_DIR, isSafeUploadName, uploadDir } from '../media-dir.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
 import type { MediaKind } from '../../shared/media-kind.ts';
 
@@ -78,6 +81,21 @@ export interface ExternalProjectAssetInventory {
   assetCount: number;
 }
 
+export type ExternalProjectAssetDeletion =
+  | {
+    ok: true;
+    projectId: string;
+    asset: ExternalProjectAsset;
+    storage: 'local_deleted' | 'local_not_found' | 'retained_shared' | 'not_managed';
+  }
+  | {
+    ok: false;
+    code: 'PROJECT_NOT_FOUND' | 'ASSET_NOT_FOUND' | 'ASSET_IN_USE';
+    projectId: string;
+    assetId: string;
+    timelineIds?: string[];
+  };
+
 interface StoredProjectDoc {
   version: unknown;
   assets: ExternalProjectAsset[];
@@ -85,6 +103,61 @@ interface StoredProjectDoc {
   timelines: unknown[];
   activeTimelineId: string;
   [key: string]: unknown;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function timelineIdsUsingSource(doc: StoredProjectDoc, src: string): string[] {
+  const ids: string[] = [];
+  for (const timelineValue of doc.timelines) {
+    const timeline = record(timelineValue);
+    const items = Array.isArray(timeline?.items) ? timeline.items : [];
+    if (items.some((itemValue) => {
+      const item = record(itemValue);
+      return item?.src === src || item?.denoisedSrc === src;
+    })) ids.push(String(timeline?.id ?? 'unknown'));
+  }
+  return ids;
+}
+
+function sourceIsReferencedElsewhere(
+  entries: Record<string, unknown>,
+  projectId: string,
+  assetId: string,
+  src: string,
+): boolean {
+  for (const [key, value] of Object.entries(entries)) {
+    if (!key.startsWith('project:') || !isProjectDoc(value)) continue;
+    const ownerProjectId = key.slice('project:'.length);
+    if (value.assets.some((asset) => (
+      asset.src === src && !(ownerProjectId === projectId && asset.id === assetId)
+    ))) return true;
+    if (ownerProjectId !== projectId && timelineIdsUsingSource(value, src).length > 0) return true;
+  }
+  return false;
+}
+
+async function removeManagedLocalFile(src: string): Promise<'local_deleted' | 'local_not_found' | 'not_managed'> {
+  const prefix = '/media/uploads/';
+  if (!src.startsWith(prefix)) return 'not_managed';
+  const name = src.slice(prefix.length);
+  if (!isSafeUploadName(name)) return 'not_managed';
+
+  const directories = [...new Set([uploadDir(), DEFAULT_UPLOAD_DIR])];
+  let removed = false;
+  for (const directory of directories) {
+    try {
+      await unlink(join(directory, name));
+      removed = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return removed ? 'local_deleted' : 'local_not_found';
 }
 
 export async function getExternalProject(projectId: string): Promise<ProjectMeta | undefined> {
@@ -123,6 +196,45 @@ export async function getExternalProjectAssetInventory(
     })),
     assetCount: doc.assets.length,
   };
+}
+
+/**
+ * Remove one asset from an external project's media pool.
+ * Timeline references block deletion so a coordinator cannot silently break an edit.
+ * A local upload is removed only when no other persisted project still references it.
+ */
+export async function deleteExternalProjectAsset(
+  projectId: string,
+  assetId: string,
+): Promise<ExternalProjectAssetDeletion> {
+  const store = await readStore();
+  const metas = projectMetas(store.entries.projects);
+  const meta = metas.find((project) => project.id === projectId && !project.deletedAt);
+  const current = store.entries[`project:${projectId}`];
+  if (!meta || !isProjectDoc(current)) {
+    return { ok: false, code: 'PROJECT_NOT_FOUND', projectId, assetId };
+  }
+
+  const asset = current.assets.find((item) => item.id === assetId);
+  if (!asset) return { ok: false, code: 'ASSET_NOT_FOUND', projectId, assetId };
+
+  const timelineIds = timelineIdsUsingSource(current, asset.src);
+  if (timelineIds.length) {
+    return { ok: false, code: 'ASSET_IN_USE', projectId, assetId, timelineIds };
+  }
+
+  const shared = sourceIsReferencedElsewhere(store.entries, projectId, assetId, asset.src);
+  const storage = shared ? 'retained_shared' : await removeManagedLocalFile(asset.src);
+  const next: StoredProjectDoc = {
+    ...current,
+    assets: current.assets.filter((item) => item.id !== assetId),
+  };
+  const updatedAt = Date.now();
+  await setStoredEntry(`project:${projectId}`, next);
+  await setStoredEntry('projects', metas.map((project) => (
+    project.id === projectId ? { ...project, updatedAt } : project
+  )));
+  return { ok: true, projectId, asset, storage };
 }
 
 function isProjectDoc(value: unknown): value is StoredProjectDoc {

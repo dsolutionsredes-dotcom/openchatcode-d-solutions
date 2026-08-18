@@ -12,7 +12,7 @@ process.env.OPENCHATCUT_EXTERNAL_API_KEY = 'test-external-assets-key';
 const { seedKeystore } = await import('../keystore.ts');
 seedKeystore({ MEDIA_DIR: join(tempRoot, 'uploads') });
 const { handleExternalProjectsRequest } = await import('../external-api/projects.ts');
-const { readStore } = await import('../plugins/project-store.ts');
+const { readStore, setStoredEntry } = await import('../plugins/project-store.ts');
 
 type ResponseCapture = {
   statusCode: number;
@@ -125,6 +125,39 @@ try {
     }],
     assetCount: 1,
   }, 'asset inventory exposes only the project media pool');
+
+  const blockedDoc = {
+    ...doc,
+    timelines: [{ id: 'tl_using_asset', items: [{ id: 'clip_1', src: result.asset.src }] }],
+  };
+  await setStoredEntry(`project:${projectId}`, blockedDoc);
+  const inUse = await request('DELETE', `/projects/${projectId}/assets/${result.asset.id}`, {
+    apiKey: 'test-external-assets-key',
+  });
+  assert.equal(inUse.statusCode, 409);
+  assert.deepEqual(inUse.json, {
+    error: 'asset is in use by the timeline',
+    code: 'ASSET_IN_USE',
+    timelineIds: ['tl_using_asset'],
+  });
+
+  await setStoredEntry(`project:${projectId}`, { ...blockedDoc, timelines: [] });
+  const deleted = await request('DELETE', `/projects/${projectId}/assets/${result.asset.id}`, {
+    apiKey: 'test-external-assets-key',
+  });
+  assert.equal(deleted.statusCode, 200);
+  assert.deepEqual(deleted.json, {
+    ok: true,
+    projectId,
+    asset: { id: result.asset.id, name: 'clip.mp4', kind: 'video' },
+    storage: 'local_deleted',
+  });
+  const emptyInventory = await request('GET', `/projects/${projectId}/assets`, {
+    apiKey: 'test-external-assets-key',
+  });
+  assert.deepEqual(emptyInventory.json, { projectId, assets: [], assetCount: 0 });
+  await assert.rejects(readFile(join(tempRoot, 'uploads', diskName)));
+
   const missingInventory = await request('GET', '/projects/missing-project/assets', {
     apiKey: 'test-external-assets-key',
   });

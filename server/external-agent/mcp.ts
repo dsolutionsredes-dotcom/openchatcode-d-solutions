@@ -16,7 +16,7 @@ import {
   resolveProjectId,
   setTargetProject,
 } from './broker.ts';
-import { createExternalProject, deleteExternalProject, listExternalProjects } from './projects.ts';
+import { createExternalProject, deleteExternalProject, deleteExternalProjectAsset, listExternalProjects } from './projects.ts';
 
 const PROJECT_SELECTOR = {
   type: 'string',
@@ -78,6 +78,16 @@ const CONTROL_TOOLS: Tool[] = [
     name: 'delete_project',
     description: 'Permanently delete an OpenChatCut project and all persisted project data. This cannot be undone.',
     inputSchema: { type: 'object', properties: { projectId: { type: 'string' } }, required: ['projectId'] },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'delete_asset',
+    description: 'Permanently remove one unused asset from an OpenChatCut media pool. Fails if any timeline still uses it.',
+    inputSchema: {
+      type: 'object',
+      properties: { projectId: { type: 'string' }, assetId: { type: 'string' } },
+      required: ['projectId', 'assetId'],
+    },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -151,6 +161,24 @@ async function callControlTool(
     if (!deleted) throw new Error(`project not found: ${projectId}`);
     clearTargetProject();
     return { ok: true, projectId, permanentlyDeleted: true };
+  }
+  if (name === 'delete_asset') {
+    const projectId = String(args.projectId ?? '').trim();
+    const assetId = String(args.assetId ?? '').trim();
+    if (!projectId) throw new Error('projectId is required');
+    if (!assetId) throw new Error('assetId is required');
+    const deleted = await deleteExternalProjectAsset(projectId, assetId);
+    if (!deleted.ok) {
+      if (deleted.code === 'PROJECT_NOT_FOUND') throw new Error(`project not found: ${projectId}`);
+      if (deleted.code === 'ASSET_NOT_FOUND') throw new Error(`asset not found: ${assetId}`);
+      throw new Error(`asset is in use by timeline(s): ${(deleted.timelineIds ?? []).join(', ')}`);
+    }
+    return {
+      ok: true,
+      projectId,
+      asset: { id: deleted.asset.id, name: deleted.asset.name, kind: deleted.asset.kind },
+      storage: deleted.storage,
+    };
   }
   if (name === 'get_editor_url') {
     const projectId = resolveProjectId(args.projectId);
