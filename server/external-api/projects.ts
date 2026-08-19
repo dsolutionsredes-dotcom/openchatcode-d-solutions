@@ -1,8 +1,11 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { addExternalProjectAsset, createExternalProject, deleteExternalProject, deleteExternalProjectAsset, getExternalProject, getExternalProjectAssetInventory, listExternalProjects } from '../external-agent/projects.ts';
+import { addExternalProjectAsset, createExternalProject, deleteExternalProject, deleteExternalProjectAsset, getExternalProject, getExternalProjectAssetInventory, getExternalProjectTimelineFps, listExternalProjects } from '../external-agent/projects.ts';
 import { maxUploadBytes, storeUploadStream } from '../plugins/upload.ts';
 import { kindOfDescriptor, type MediaKind } from '../../shared/media-kind.ts';
+import { resolveUploadFile } from '../media-dir.ts';
+import { ffprobeBin } from '../media-binaries.ts';
 import { clearChatProjectContext, getChatProjectContext, setChatProjectContext } from '../external-agent/chat-project-context.ts';
 import { getProjectDriveContext, setProjectDriveContext } from '../external-agent/project-drive-context.ts';
 
@@ -96,6 +99,53 @@ function declaredContentLength(req: IncomingMessage): number | undefined {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
+type ExternalMediaMetadata = {
+  durationSeconds: number;
+  width?: number;
+  height?: number;
+};
+
+function runFfprobe(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffprobeBin(), [
+      '-v', 'error',
+      '-show_entries', 'format=duration:stream=codec_type,width,height,duration',
+      '-of', 'json',
+      path,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += String(chunk); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += String(chunk); });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`ffprobe failed (${code ?? 'unknown'}): ${stderr.slice(-400)}`));
+    });
+  });
+}
+
+/** Read only metadata from an already-uploaded playable file; it never changes source bytes. */
+async function probeExternalMedia(path: string, kind: 'video' | 'audio'): Promise<ExternalMediaMetadata> {
+  const output = await runFfprobe(path);
+  const data = JSON.parse(output || '{}') as {
+    format?: { duration?: string };
+    streams?: Array<{ codec_type?: string; width?: number; height?: number; duration?: string }>;
+  };
+  const streams = Array.isArray(data.streams) ? data.streams : [];
+  const stream = streams.find((item) => item.codec_type === kind);
+  if (!stream) throw new Error(`no ${kind} stream found`);
+  const durationSeconds = Number(data.format?.duration) || Number(stream.duration) || 0;
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) throw new Error('media duration is unavailable');
+  const width = Number(stream.width);
+  const height = Number(stream.height);
+  return {
+    durationSeconds,
+    ...(kind === 'video' && width > 0 ? { width } : {}),
+    ...(kind === 'video' && height > 0 ? { height } : {}),
+  };
+}
+
 async function createExternalAsset(
   req: IncomingMessage,
   res: ServerResponse,
@@ -139,12 +189,38 @@ async function createExternalAsset(
     contentType: contentType(req) || undefined,
     maxBytes: maxUploadBytes(),
   });
+  const filePath = resolveUploadFile(stored.name);
+  if (!filePath) {
+    sendJson(res, 500, { error: 'uploaded file is unavailable for metadata inspection' });
+    return;
+  }
+
+  const fps = await getExternalProjectTimelineFps(projectId) ?? 30;
+  let durationInFrames: number;
+  let dimensions: Pick<ExternalMediaMetadata, 'width' | 'height'> = {};
+  if (kind === 'video' || kind === 'audio') {
+    try {
+      const metadata = await probeExternalMedia(filePath, kind);
+      durationInFrames = Math.max(1, Math.round(metadata.durationSeconds * fps));
+      dimensions = { width: metadata.width, height: metadata.height };
+    } catch (error) {
+      sendJson(res, 422, {
+        error: `media metadata inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+        code: 'MEDIA_PROBE_FAILED',
+      });
+      return;
+    }
+  } else {
+    // Static visual assets keep the editor's existing five-second default.
+    durationInFrames = 150;
+  }
   const asset = {
     id: randomUUID(),
     name: originalName,
     kind,
     src: stored.path,
-    durationInFrames: 150,
+    durationInFrames,
+    ...dimensions,
   } as const;
   const registered = await addExternalProjectAsset(projectId, asset);
   if (!registered) {
@@ -153,7 +229,15 @@ async function createExternalAsset(
   }
   sendJson(res, 201, {
     projectId,
-    asset: { id: registered.id, name: registered.name, kind: registered.kind, src: registered.src },
+    asset: {
+      id: registered.id,
+      name: registered.name,
+      kind: registered.kind,
+      src: registered.src,
+      durationInFrames: registered.durationInFrames,
+      ...(registered.width ? { width: registered.width } : {}),
+      ...(registered.height ? { height: registered.height } : {}),
+    },
   });
 }
 

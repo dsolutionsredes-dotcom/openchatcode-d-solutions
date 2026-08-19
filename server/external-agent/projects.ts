@@ -67,6 +67,8 @@ export interface ExternalProjectAsset {
   kind: MediaKind;
   src: string;
   durationInFrames: number;
+  width?: number;
+  height?: number;
 }
 
 /**
@@ -178,6 +180,16 @@ export async function loadExternalProjectDoc(projectId: string): Promise<StoredP
   const meta = projectMetas(store.entries.projects).find((project) => project.id === projectId && !project.deletedAt);
   const doc = store.entries[`project:${projectId}`];
   return meta && isProjectDoc(doc) ? doc : undefined;
+}
+
+/** FPS of the active ProjectDoc timeline, when that timeline defines one. */
+export async function getExternalProjectTimelineFps(projectId: string): Promise<number | undefined> {
+  const doc = await loadExternalProjectDoc(projectId);
+  if (!doc) return undefined;
+  const timelines = doc.timelines.map(record).filter((timeline): timeline is Record<string, unknown> => !!timeline);
+  const active = timelines.find((timeline) => String(timeline.id ?? '') === doc.activeTimelineId) ?? timelines[0];
+  const fps = Number(active?.fps);
+  return Number.isFinite(fps) && fps > 0 && fps <= 120 ? fps : undefined;
 }
 
 export async function getExternalProjectAssetInventory(

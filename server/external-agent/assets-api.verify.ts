@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { ffmpegBin } from '../media-binaries.ts';
 
 const tempRoot = await mkdtemp(join(tmpdir(), 'openchatcut-assets-api-'));
 process.env.HOME = tempRoot;
@@ -88,27 +90,47 @@ try {
   });
   assert.equal(unsupported.statusCode, 415);
 
+  const fixture = join(tempRoot, 'over-five-seconds.mp4');
+  const encoded = spawnSync(ffmpegBin(), [
+    '-y', '-f', 'lavfi', '-i', 'color=c=black:s=32x18:r=30:d=6',
+    '-an', '-c:v', 'mpeg4', fixture,
+  ], { encoding: 'utf8' });
+  assert.equal(encoded.status, 0, `fixture creation failed: ${encoded.stderr}`);
+  const videoBytes = await readFile(fixture);
+
   const uploaded = await request('POST', `/projects/${projectId}/assets?name=clip.mp4&kind=video`, {
-    apiKey: 'test-external-assets-key', body: Buffer.from('video bytes'), contentType: 'video/mp4',
+    apiKey: 'test-external-assets-key', body: videoBytes, contentType: 'video/mp4',
   });
   assert.equal(uploaded.statusCode, 201);
-  const result = uploaded.json as { projectId: string; asset: { id: string; name: string; kind: string; src: string } };
+  const result = uploaded.json as {
+    projectId: string;
+    asset: { id: string; name: string; kind: string; src: string; durationInFrames: number; width?: number; height?: number };
+  };
   assert.equal(result.projectId, projectId);
   assert.deepEqual(
     { name: result.asset.name, kind: result.asset.kind },
     { name: 'clip.mp4', kind: 'video' },
   );
   assert.match(result.asset.src, /^\/media\/uploads\/[a-z0-9-]+\.mp4$/i);
+  assert.ok(result.asset.durationInFrames > 150, 'a six-second video must not become a fixed five-second asset');
+  assert.ok(Math.abs(result.asset.durationInFrames - 180) <= 1, 'duration uses the 30fps project timeline');
+  assert.equal(result.asset.width, 32);
+  assert.equal(result.asset.height, 18);
 
   const store = await readStore();
-  const doc = store.entries[`project:${projectId}`] as { assets: Array<{ id: string; src: string; name: string; kind: string }> };
+  const doc = store.entries[`project:${projectId}`] as {
+    assets: Array<{ id: string; src: string; name: string; kind: string; durationInFrames: number; width?: number; height?: number }>;
+  };
   const persisted = doc.assets.find((asset) => asset.id === result.asset.id);
   assert.ok(persisted, 'asset is registered in the requested ProjectDoc');
   assert.equal(persisted.name, 'clip.mp4');
   assert.equal(persisted.kind, 'video');
   assert.equal(persisted.src, result.asset.src);
+  assert.equal(persisted.durationInFrames, result.asset.durationInFrames);
+  assert.equal(persisted.width, 32);
+  assert.equal(persisted.height, 18);
   const diskName = result.asset.src.split('/').pop()!;
-  assert.deepEqual(await readFile(join(tempRoot, 'uploads', diskName)), Buffer.from('video bytes'));
+  assert.deepEqual(await readFile(join(tempRoot, 'uploads', diskName)), videoBytes);
 
   const inventory = await request('GET', `/projects/${projectId}/assets`, {
     apiKey: 'test-external-assets-key',
@@ -121,7 +143,7 @@ try {
       name: 'clip.mp4',
       kind: 'video',
       src: result.asset.src,
-      durationInFrames: 150,
+      durationInFrames: result.asset.durationInFrames,
     }],
     assetCount: 1,
   }, 'asset inventory exposes only the project media pool');
