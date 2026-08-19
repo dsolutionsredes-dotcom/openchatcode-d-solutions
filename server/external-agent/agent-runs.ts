@@ -11,8 +11,17 @@ import { loadExternalConversation, saveExternalConversation, type ExternalConver
 import type { LLMMessage } from '../../src/agent/runtime.ts';
 import { isExplicitPreviewRequest, previewPrompt, refreshExternalPreview } from './preview.ts';
 import { installExternalAgentServerFetch } from './server-fetch.ts';
+import { applyLiveCaps, applyLiveKeyStatus, applyLiveModels } from '../../src/agent/capabilities.ts';
+import { keyStatus } from '../keystore.ts';
 
 export type { ExternalAgentRun } from './run-store.ts';
+
+function syncExternalAgentCapabilities(): void {
+  const status = keyStatus();
+  applyLiveCaps(status.caps);
+  applyLiveKeyStatus(status.keys);
+  applyLiveModels(status.models);
+}
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
   const run = await loadExternalAgentRun(runId);
@@ -34,6 +43,8 @@ export async function createExternalAgentRun(
   conversationId = `external:${projectId}`,
 ): Promise<ExternalAgentRun> {
   installExternalAgentServerFetch();
+  syncExternalAgentCapabilities();
+
   const doc = await loadExternalProjectDoc(projectId);
   if (!doc) throw new Error('PROJECT_NOT_FOUND');
   const initial = createGenerationJob({ kind: 'external-agent', projectId }, async (runId, update) => {
@@ -93,14 +104,14 @@ export async function createExternalAgentRun(
       let attemptSession = session;
       const history = [...conversation.llm, { role: 'user' as const, content }] as LLMMessage[];
       const resultMessages = await runAgent(history, draftContext, (event) => {
-      if (event.type === 'text-delta') run.assistantText += event.delta;
-      if (event.type === 'tool') attemptSession = captureExternalToolActions(attemptSession, event.name, event.args as Record<string, unknown>);
-      if (event.type === 'error') run.error = event.message;
+        if (event.type === 'text-delta') run.assistantText += event.delta;
+        if (event.type === 'tool') attemptSession = captureExternalToolActions(attemptSession, event.name, event.args as Record<string, unknown>);
+        if (event.type === 'error') run.error = event.message;
       }, {
-      model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
-      provider: config.provider,
-      openAiApiMode: config.openAiApiMode,
-      allowTool: isExternalAgentToolAllowed,
+        model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
+        provider: config.provider,
+        openAiApiMode: config.openAiApiMode,
+        allowTool: isExternalAgentToolAllowed,
       });
       if (!run.error) {
         currentSession = attemptSession;
