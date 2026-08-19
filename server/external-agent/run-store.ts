@@ -18,6 +18,10 @@ export interface ExternalAgentRun {
   appliedOperationCount?: number;
   previewStatus?: ExternalPreviewStatus;
   preview?: { jobId?: string; status: 'queued' | 'running' | 'ready' | 'failed'; path?: string; sizeBytes?: number; error?: string };
+  /** A newer run replaced this draft/proposal. Old runs must no longer be approvable. */
+  supersededByRunId?: string;
+  /** Audit pointer to the prior draft/proposal that this run continued. */
+  supersedesRunId?: string;
   error: string | null;
   providerUsed?: string;
   modelUsed?: string;
@@ -40,17 +44,60 @@ function isRun(value: unknown): value is ExternalAgentRun {
     && typeof run.createdAt === 'number' && typeof run.updatedAt === 'number';
 }
 
-export async function saveExternalAgentRun(run: ExternalAgentRun): Promise<void> {
+async function allRuns(): Promise<ExternalAgentRun[]> {
   const store = await readStore();
-  const runs = Array.isArray(store.entries[EXTERNAL_AGENT_RUNS_KEY])
+  return Array.isArray(store.entries[EXTERNAL_AGENT_RUNS_KEY])
     ? store.entries[EXTERNAL_AGENT_RUNS_KEY].filter(isRun)
     : [];
+}
+
+export async function saveExternalAgentRun(run: ExternalAgentRun): Promise<void> {
+  const runs = await allRuns();
   await setStoredEntry(EXTERNAL_AGENT_RUNS_KEY, [run, ...runs.filter((item) => item.runId !== run.runId)]);
 }
 
 export async function loadExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
-  const store = await readStore();
-  return Array.isArray(store.entries[EXTERNAL_AGENT_RUNS_KEY])
-    ? store.entries[EXTERNAL_AGENT_RUNS_KEY].filter(isRun).find((item) => item.runId === runId)
-    : undefined;
+  return (await allRuns()).find((item) => item.runId === runId);
+}
+
+/**
+ * Return the newest still-live draft/proposal for one project + conversation.
+ * It includes normal pending proposals and preview/editing runs that temporarily
+ * hide approval until the preview is ready.
+ */
+export async function loadLatestExternalDraftRun(
+  projectId: string,
+  conversationId: string,
+  excludeRunId?: string,
+): Promise<ExternalAgentRun | undefined> {
+  return (await allRuns()).find((run) => (
+    run.runId !== excludeRunId
+    && run.projectId === projectId
+    && run.conversationId === conversationId
+    && !!run.proposal
+    && !run.supersededByRunId
+    && approvalStatusOf(run) !== 'applied'
+    && approvalStatusOf(run) !== 'rejected'
+    && (
+      run.requiresApproval
+      || run.previewStatus === 'awaiting-choice'
+      || run.previewStatus === 'rendering'
+      || run.previewStatus === 'ready'
+      || run.previewStatus === 'editing'
+      || run.previewStatus === 'scheduled'
+    )
+  ));
+}
+
+/** Make an older draft non-approvable after a newer run has safely replaced it. */
+export async function supersedeExternalAgentRun(runId: string, supersededByRunId: string): Promise<void> {
+  const run = await loadExternalAgentRun(runId);
+  if (!run || run.supersededByRunId) return;
+  await saveExternalAgentRun({
+    ...run,
+    requiresApproval: false,
+    approvalStatus: undefined,
+    supersededByRunId,
+    updatedAt: Date.now(),
+  });
 }
