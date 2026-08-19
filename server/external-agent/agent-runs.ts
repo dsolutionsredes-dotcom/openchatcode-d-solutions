@@ -10,6 +10,7 @@ import { loadExternalAgentRun, saveExternalAgentRun, type ExternalAgentRun } fro
 import { loadExternalConversation, saveExternalConversation, type ExternalConversation } from './conversation-store.ts';
 import type { LLMMessage } from '../../src/agent/runtime.ts';
 import { isExplicitPreviewRequest, previewPrompt, refreshExternalPreview } from './preview.ts';
+import { installExternalAgentServerFetch } from './server-fetch.ts';
 
 export type { ExternalAgentRun } from './run-store.ts';
 
@@ -32,6 +33,7 @@ export async function createExternalAgentRun(
   references: unknown[],
   conversationId = `external:${projectId}`,
 ): Promise<ExternalAgentRun> {
+  installExternalAgentServerFetch();
   const doc = await loadExternalProjectDoc(projectId);
   if (!doc) throw new Error('PROJECT_NOT_FOUND');
   const initial = createGenerationJob({ kind: 'external-agent', projectId }, async (runId, update) => {

@@ -1,4 +1,5 @@
 import { resolveAssetReference } from '../../src/agent/asset-resolver.ts';
+import { EXTERNAL_DRAFT_TOOL_NAMES, isExternalDraftTool } from '../../src/agent/external-tool-policy.ts';
 import type { MediaAsset } from '../../src/editor/types.ts';
 
 /**
@@ -6,18 +7,10 @@ import type { MediaAsset } from '../../src/editor/types.ts';
  * editor bridge, or relative browser fetch. Mutating tools remain staged by
  * ExternalEditSession and therefore still require Apply/Reject.
  */
-export const SERVER_SAFE_TOOLS = new Set([
-  'read_timeline', 'read_project', 'set_aspect_ratio', 'move_item', 'set_item_timing', 'duplicate_item',
-  'remove_item', 'split_item', 'clear_timeline', 'update_item_props', 'edit_item',
-  'edit_track', 'manage_timelines', 'manage_media_pool', 'edit_project', 'edit_captions',
-  'read_transcript', 'find_transcript', 'read_captions', 'clean_script', 'edit_gap', 'delete_text',
-  'manage_effects', 'manage_markers', 'apply_layout', 'list_audio', 'add_audio',
-  'list_templates', 'search_templates', 'add_motion_graphic',
-  'read_script', 'apply_script',
-]);
+export const SERVER_SAFE_TOOLS = EXTERNAL_DRAFT_TOOL_NAMES;
 
 export function isExternalAgentToolAllowed(name: string): boolean {
-  return SERVER_SAFE_TOOLS.has(name);
+  return isExternalDraftTool(name);
 }
 
 /** Prepare deterministic project-asset context before an external LLM run. */

@@ -27,12 +27,14 @@ for (const tool of [
   'read_transcript', 'find_transcript', 'read_captions', 'edit_captions', 'manage_effects',
   'manage_markers', 'apply_layout', 'list_audio', 'add_audio', 'list_templates',
   'search_templates', 'add_motion_graphic', 'read_script', 'apply_script',
+  'transcribe_track', 'manage_transcript', 'delete_text', 'edit_gap', 'update_watermark',
+  'search_fonts', 'submit_render_job', 'track_export', 'read_export_history',
+  'verify_export', 'probe_media', 'ToolSearch',
 ]) {
   assert.equal(isExternalAgentToolAllowed(tool), true, `${tool} is server-safe`);
 }
 for (const tool of [
-  'transcribe_track', 'detect_scenes', 'auto_reframe', 'view_timeline_frames',
-  'submit_render_job', 'submit_video', 'submit_music', 'run_code', 'web_browser',
+  'detect_scenes', 'auto_reframe', 'submit_video', 'submit_music', 'run_code', 'web_browser',
   'request_asset_upload_url', 'delete_project',
 ]) {
   assert.equal(isExternalAgentToolAllowed(tool), false, `${tool} remains unavailable server-side`);
