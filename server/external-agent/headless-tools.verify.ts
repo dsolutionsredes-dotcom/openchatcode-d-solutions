@@ -13,6 +13,7 @@ installExternalAgentServerFetch();
 
 for (const tool of [
   'edit_item',
+  'manage_media_pool',
   'transcribe_track',
   'manage_transcript',
   'edit_captions',
