@@ -20,6 +20,12 @@ export interface ExternalRunApprovalResult {
 }
 
 function proposalOf(run: ExternalAgentRun): Proposal {
+  if (run.supersededByRunId) {
+    throw new ExternalRunApprovalError(
+      'APPROVAL_CONFLICT',
+      `proposal was superseded by run ${run.supersededByRunId}`,
+    );
+  }
   if (!run.proposal || !run.requiresApproval || approvalStatusOf(run) !== 'pending') {
     throw new ExternalRunApprovalError('PROPOSAL_NOT_PENDING', 'run has no pending proposal');
   }
@@ -43,13 +49,21 @@ function operations(proposal: Proposal) {
   return proposal.options[0]?.operations ?? [];
 }
 
-/** Apply the persisted draft proposal exactly once, without a browser. */
+/** Apply the persisted continuous-draft proposal exactly once, without a browser. */
 export async function applyExternalAgentRun(runId: string): Promise<ExternalRunApprovalResult> {
   const run = await loadExternalAgentRun(runId);
   if (!run) throw new ExternalRunApprovalError('RUN_NOT_FOUND', 'run not found');
+  if (run.supersededByRunId) {
+    throw new ExternalRunApprovalError(
+      'APPROVAL_CONFLICT',
+      `proposal was superseded by run ${run.supersededByRunId}`,
+    );
+  }
+
   const status = approvalStatusOf(run);
   if (status === 'applied') return response(run, true);
   if (status === 'rejected') throw new ExternalRunApprovalError('APPROVAL_CONFLICT', 'proposal was rejected and cannot be applied');
+
   const proposal = proposalOf(run);
   const doc = await loadExternalProjectDoc(run.projectId);
   if (!doc) throw new ExternalRunApprovalError('RUN_NOT_FOUND', 'project not found');
@@ -83,9 +97,17 @@ export async function applyExternalAgentRun(runId: string): Promise<ExternalRunA
 export async function rejectExternalAgentRun(runId: string): Promise<ExternalRunApprovalResult> {
   const run = await loadExternalAgentRun(runId);
   if (!run) throw new ExternalRunApprovalError('RUN_NOT_FOUND', 'run not found');
+  if (run.supersededByRunId) {
+    throw new ExternalRunApprovalError(
+      'APPROVAL_CONFLICT',
+      `proposal was superseded by run ${run.supersededByRunId}`,
+    );
+  }
+
   const status = approvalStatusOf(run);
   if (status === 'rejected') return response(run, true);
   if (status === 'applied') throw new ExternalRunApprovalError('APPROVAL_CONFLICT', 'proposal was applied and cannot be rejected');
+
   proposalOf(run);
   const completed: ExternalAgentRun = {
     ...run,
