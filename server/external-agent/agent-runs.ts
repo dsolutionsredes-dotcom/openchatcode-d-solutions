@@ -5,8 +5,16 @@ import { runAgent } from '../../src/agent/runtime.ts';
 import { getLanguageModel } from '../../src/agent/client.ts';
 import { hasProviderCredentials, resolveAgentBrainProviders } from '../provider-config.ts';
 import type { MediaAsset } from '../../src/editor/types.ts';
+import { replayActions } from '../../src/editor/store.ts';
+import { buildProposal, isProposalStale, type Proposal } from '../../src/agent/proposal.ts';
 import { isExternalAgentToolAllowed, prepareExternalAgentInput } from './asset-input.ts';
-import { loadExternalAgentRun, saveExternalAgentRun, type ExternalAgentRun } from './run-store.ts';
+import {
+  loadExternalAgentRun,
+  loadLatestExternalDraftRun,
+  saveExternalAgentRun,
+  supersedeExternalAgentRun,
+  type ExternalAgentRun,
+} from './run-store.ts';
 import { loadExternalConversation, saveExternalConversation, type ExternalConversation } from './conversation-store.ts';
 import type { LLMMessage } from '../../src/agent/runtime.ts';
 import { isExplicitPreviewRequest, previewPrompt, refreshExternalPreview } from './preview.ts';
@@ -21,6 +29,17 @@ function syncExternalAgentCapabilities(): void {
   applyLiveCaps(status.caps);
   applyLiveKeyStatus(status.keys);
   applyLiveModels(status.models);
+}
+
+function proposalOperations(proposal: Proposal) {
+  return proposal.options[0]?.operations ?? [];
+}
+
+function draftDocFromProposal(proposal: Proposal) {
+  return replayActions(
+    proposal.baseDoc,
+    proposalOperations(proposal).flatMap((operation) => operation.actions),
+  );
 }
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
@@ -47,6 +66,7 @@ export async function createExternalAgentRun(
 
   const doc = await loadExternalProjectDoc(projectId);
   if (!doc) throw new Error('PROJECT_NOT_FOUND');
+
   const initial = createGenerationJob({ kind: 'external-agent', projectId }, async (runId, update) => {
     let run: ExternalAgentRun = {
       runId, projectId, conversationId, status: 'running', assistantText: '', proposal: null,
@@ -54,9 +74,12 @@ export async function createExternalAgentRun(
     };
     await saveExternalAgentRun(run);
     update({ progress: 10, phase: 'running' });
+
     let currentSession: ReturnType<typeof createExternalEditSession> | null = null;
     const prepared = prepareExternalAgentInput(message, doc.assets as MediaAsset[], references);
     const previous = await loadExternalConversation(projectId, conversationId);
+    const pendingDraft = await loadLatestExternalDraftRun(projectId, conversationId, runId);
+
     const now = Date.now();
     const conversation: ExternalConversation = previous ?? {
       projectId, conversationId, messages: [], llm: [], createdAt: now, updatedAt: now,
@@ -73,13 +96,34 @@ export async function createExternalAgentRun(
         updatedAt: Date.now(),
       });
     };
+
+    /*
+     * Preview is a continuation of the current draft, not a render of the old
+     * persisted project. We create a new preview run that owns the same proposal,
+     * then supersede the older pending run so only one run can ever be approved.
+     */
     if (isExplicitPreviewRequest(message)) {
-      run = { ...run, status: 'succeeded', previewStatus: 'awaiting-choice', assistantText: previewPrompt(), updatedAt: Date.now() };
+      run = {
+        ...run,
+        status: 'succeeded',
+        proposal: pendingDraft?.proposal ?? null,
+        requiresApproval: false,
+        approvalStatus: undefined,
+        previewStatus: 'awaiting-choice',
+        assistantText: previewPrompt(),
+        ...(pendingDraft ? { supersedesRunId: pendingDraft.runId } : {}),
+        updatedAt: Date.now(),
+      };
       await saveExternalAgentRun(run);
-      await appendConversation([...conversation.llm, { role: 'user', content: message }, { role: 'assistant', content: run.assistantText }], run.assistantText);
+      if (pendingDraft) await supersedeExternalAgentRun(pendingDraft.runId, runId);
+      await appendConversation(
+        [...conversation.llm, { role: 'user', content: message }, { role: 'assistant', content: run.assistantText }],
+        run.assistantText,
+      );
       update({ progress: 100, phase: 'awaiting-preview-choice' });
       return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
     }
+
     if (prepared.clarification) {
       run = { ...run, status: 'succeeded', assistantText: prepared.clarification, updatedAt: Date.now() };
       await saveExternalAgentRun(run);
@@ -87,25 +131,52 @@ export async function createExternalAgentRun(
       update({ progress: 100, phase: 'completed' });
       return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
     }
+
     const content = prepared.content!;
     const selected = resolveAgentBrainProviders();
     if (!selected.selected) throw new Error('AGENT_PROVIDER_NOT_SELECTED');
     const configs = selected.configs.filter(hasProviderCredentials);
     if (!configs.length) throw new Error('LLM_NOT_CONFIGURED');
+
+    /*
+     * Continue the prior unapproved draft only when its original base still
+     * matches the persisted project. Otherwise start from the live project so a
+     * stale proposal can never silently overwrite newer edits.
+     */
+    const continuation = pendingDraft?.proposal && !isProposalStale(pendingDraft.proposal, doc)
+      ? pendingDraft
+      : undefined;
+    const workingDoc = continuation?.proposal
+      ? draftDocFromProposal(continuation.proposal)
+      : doc;
+
     for (const [index, config] of configs.entries()) {
       run.error = null;
       run.assistantText = '';
-      const session = createExternalEditSession(doc, 'External Agent', 'manual');
+
+      const session = createExternalEditSession(workingDoc, 'External Agent', 'manual');
       const live = {
-        commands: session.draft!.commands, getState: session.draft!.getState, getDoc: session.draft!.getDoc,
-        getCreativeMode: () => null, templates: [], audio: [], getProjectId: () => projectId,
+        commands: session.draft!.commands,
+        getState: session.draft!.getState,
+        getDoc: session.draft!.getDoc,
+        getCreativeMode: () => null,
+        templates: [],
+        audio: [],
+        getProjectId: () => projectId,
       };
       const draftContext = externalDraftContext(session, live);
       let attemptSession = session;
       const history = [...conversation.llm, { role: 'user' as const, content }] as LLMMessage[];
+
       const resultMessages = await runAgent(history, draftContext, (event) => {
         if (event.type === 'text-delta') run.assistantText += event.delta;
-        if (event.type === 'tool') attemptSession = captureExternalToolActions(attemptSession, event.name, event.args as Record<string, unknown>);
+        if (event.type === 'tool') {
+          attemptSession = captureExternalToolActions(
+            attemptSession,
+            event.name,
+            event.args as Record<string, unknown>,
+          );
+        }
         if (event.type === 'error') run.error = event.message;
       }, {
         model: getLanguageModel(config.provider, config.model, config.openAiApiMode),
@@ -113,6 +184,7 @@ export async function createExternalAgentRun(
         openAiApiMode: config.openAiApiMode,
         allowTool: isExternalAgentToolAllowed,
       });
+
       if (!run.error) {
         currentSession = attemptSession;
         run.providerUsed = config.provider;
@@ -121,22 +193,71 @@ export async function createExternalAgentRun(
         break;
       }
       if (index < configs.length - 1) {
-        run.fallbackAttempts = [...(run.fallbackAttempts ?? []), { provider: config.provider, model: config.model }];
+        run.fallbackAttempts = [
+          ...(run.fallbackAttempts ?? []),
+          { provider: config.provider, model: config.model },
+        ];
       }
     }
+
     if (run.error) throw new Error(run.error);
+
     if (currentSession?.operationCount) {
-      const reviewed = reviewExternalEditSession(currentSession, run.assistantText);
-      run = { ...run, proposal: reviewed.proposal, requiresApproval: true, approvalStatus: 'pending' };
+      if (continuation?.proposal && currentSession.draft) {
+        const combinedOperations = [
+          ...proposalOperations(continuation.proposal),
+          ...currentSession.operations,
+        ];
+        const proposal = buildProposal(
+          combinedOperations,
+          run.assistantText,
+          continuation.proposal.baseDoc,
+          currentSession.draft.getState(),
+        );
+        run = {
+          ...run,
+          proposal,
+          requiresApproval: true,
+          approvalStatus: 'pending',
+          supersedesRunId: continuation.runId,
+        };
+      } else {
+        const reviewed = reviewExternalEditSession(currentSession, run.assistantText);
+        run = {
+          ...run,
+          proposal: reviewed.proposal,
+          requiresApproval: true,
+          approvalStatus: 'pending',
+        };
+      }
     }
+
     run = { ...run, status: 'succeeded', updatedAt: Date.now() };
     await saveExternalAgentRun(run);
+
+    /*
+     * Only after the new combined proposal exists do we invalidate the prior
+     * run. If the LLM/tool execution failed, the older draft remains usable.
+     */
+    if (continuation && run.proposal) {
+      await supersedeExternalAgentRun(continuation.runId, runId);
+    }
+
     update({ progress: 100, phase: 'completed' });
     return { assetId: runId, kind: 'image', name: 'external-agent-run', path: '', durationSeconds: 0 };
   });
+
   const run: ExternalAgentRun = {
-    runId: initial.jobId, projectId, conversationId, status: 'queued', assistantText: '', proposal: null,
-    requiresApproval: false, error: null, createdAt: Date.now(), updatedAt: Date.now(),
+    runId: initial.jobId,
+    projectId,
+    conversationId,
+    status: 'queued',
+    assistantText: '',
+    proposal: null,
+    requiresApproval: false,
+    error: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
   };
   await saveExternalAgentRun(run);
   return run;
