@@ -13,7 +13,7 @@ export const EXTERNAL_EDIT_TOOL_NAMES = new Set([
   'edit_item', 'manage_effects', 'edit_captions', 'update_watermark',
   'manage_markers', 'transcribe_track', 'clean_script', 'edit_gap',
   'delete_text', 'manage_transcript', 'apply_layout', 'edit_project',
-  'submit_render_job',
+  'manage_media_pool', 'submit_render_job',
 ]);
 
 export const EXTERNAL_DRAFT_TOOL_NAMES = new Set([
