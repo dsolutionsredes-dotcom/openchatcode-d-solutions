@@ -9,6 +9,10 @@ import {
 import { handleMcpRequest, mcpTools } from '../external-agent/mcp.ts';
 import { handleExternalProjectsRequest } from '../external-api/projects.ts';
 import { handleExternalRenderRequest, isExternalRenderPath } from '../external-api/renders.ts';
+import {
+  handleExternalCapabilitiesRequest,
+  isExternalCapabilitiesPath,
+} from '../external-api/capabilities.ts';
 import type { ExternalAgentApi } from '../external-api/projects.ts';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -103,9 +107,11 @@ export function externalAgentPlugin(agentApi?: ExternalAgentApi): Plugin {
     name: 'openchatcut-external-agent',
     configureServer(server) {
       server.middlewares.use('/api/external', (req, res) => {
-        const task = isExternalRenderPath(req.url ?? '/')
-          ? handleExternalRenderRequest(req, res)
-          : handleExternalProjectsRequest(req, res, agentApi);
+        const task = isExternalCapabilitiesPath(req.url ?? '/')
+          ? handleExternalCapabilitiesRequest(req, res)
+          : isExternalRenderPath(req.url ?? '/')
+            ? handleExternalRenderRequest(req, res)
+            : handleExternalProjectsRequest(req, res, agentApi);
         void task.catch((error) => {
           if (!res.headersSent) sendJson(res, 500, { error: 'external API request failed' });
           server.config.logger.error(`[external-api] ${error instanceof Error ? error.message : 'request failed'}`);
