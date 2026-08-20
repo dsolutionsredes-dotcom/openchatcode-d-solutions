@@ -24,6 +24,23 @@ import { keyStatus } from '../keystore.ts';
 
 export type { ExternalAgentRun } from './run-store.ts';
 
+const EXTERNAL_AGENT_SYSTEM_SUFFIX = `
+# AUTO_EDITOR / modo servidor
+Eres el especialista técnico de OpenChatCut detrás de VALE. VALE es el único interlocutor general con el usuario.
+
+Reglas obligatorias:
+- Ejecuta las herramientas necesarias sin narrar planes, razonamiento interno, intentos ni pasos técnicos.
+- No pidas confirmación para cada herramienta o subpaso. La aprobación de la propuesta la gestiona AUTO_EDITOR fuera de este agente.
+- La respuesta visible final debe ser breve: normalmente 1 a 3 frases. Amplía solo si el usuario pide explícitamente una explicación o una lista.
+- Nunca inventes capacidades, transiciones, efectos, plantillas, fuentes ni opciones del editor.
+- Cuando el usuario pregunte qué transiciones, efectos, zooms, audio-fx o recursos existen, consulta browse_library y responde únicamente con resultados reales.
+- Para obtener una lista, usa browse_library en modo list (category + group o query), no te quedes en el overview. Para transiciones: category="transitions", group="transitions".
+- Si una capacidad no aparece entre las herramientas disponibles de esta ejecución, di brevemente que no está habilitada en el modo servidor de AUTO_EDITOR. No propongas fingirla con otra herramienta.
+- No recomiendes programas o servicios externos salvo que el usuario lo pida explícitamente.
+- Si una herramienta devuelve error, resume el error real en una frase y no inventes que la acción se completó.
+- Si ejecutaste varias órdenes del mismo mensaje, resume el resultado conjunto; no devuelvas un informe por cada operación.
+`.trim();
+
 function syncExternalAgentCapabilities(): void {
   const status = keyStatus();
   applyLiveCaps(status.caps);
@@ -153,6 +170,7 @@ export async function createExternalAgentRun(
     for (const [index, config] of configs.entries()) {
       run.error = null;
       run.assistantText = '';
+      let latestTurnText = '';
 
       const session = createExternalEditSession(workingDoc, 'External Agent', 'manual');
       const live = {
@@ -169,7 +187,10 @@ export async function createExternalAgentRun(
       const history = [...conversation.llm, { role: 'user' as const, content }] as LLMMessage[];
 
       const resultMessages = await runAgent(history, draftContext, (event) => {
-        if (event.type === 'text-delta') run.assistantText += event.delta;
+        // Keep only the latest visible model turn. Older tool-turn narration is
+        // internal execution detail and must not be forwarded to Telegram.
+        if (event.type === 'text-start') latestTurnText = '';
+        if (event.type === 'text-delta') latestTurnText += event.delta;
         if (event.type === 'tool') {
           attemptSession = captureExternalToolActions(
             attemptSession,
@@ -183,12 +204,14 @@ export async function createExternalAgentRun(
         provider: config.provider,
         openAiApiMode: config.openAiApiMode,
         allowTool: isExternalAgentToolAllowed,
+        systemSuffix: EXTERNAL_AGENT_SYSTEM_SUFFIX,
       });
 
       if (!run.error) {
         currentSession = attemptSession;
         run.providerUsed = config.provider;
         run.modelUsed = config.model;
+        run.assistantText = latestTurnText.trim();
         await appendConversation(resultMessages, run.assistantText);
         break;
       }
