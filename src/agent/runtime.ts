@@ -99,7 +99,15 @@ export function createAgentTools(
   onFollowup?: () => void,
   allowTool?: (name: string) => boolean,
 ): ToolSet {
-  return Object.fromEntries(TOOL_SCHEMAS.map((schema) => [
+  // Server/headless callers must not even SHOW unsupported tools to the LLM.
+  // Previously all schemas were exposed and allowTool rejected them only after
+  // the model called one, which made the agent promise capabilities that AUTO_EDITOR
+  // could not actually execute.
+  const schemas = allowTool
+    ? TOOL_SCHEMAS.filter((schema) => allowTool(schema.name))
+    : TOOL_SCHEMAS;
+
+  return Object.fromEntries(schemas.map((schema) => [
     schema.name,
     tool({
       description: schema.description,
@@ -108,6 +116,7 @@ export function createAgentTools(
       ),
       execute: async (input) => {
         const args = input ?? {};
+        // Keep the execution-time guard as defense in depth.
         if (allowTool && !allowTool(schema.name)) {
           const failed = { error: 'TOOL_NOT_SUPPORTED_ON_SERVER' };
           onEvent({ type: 'tool', name: schema.name, args, result: failed });
@@ -173,6 +182,8 @@ export async function runAgent(
     provider?: LlmProvider;
     openAiApiMode?: OpenAiApiMode;
     allowTool?: (name: string) => boolean;
+    /** Extra system rules for a specific caller, e.g. AUTO_EDITOR headless mode. */
+    systemSuffix?: string;
   },
 ): Promise<LLMMessage[]> {
   const conv = normalizeLlmMessages(messages);
@@ -183,7 +194,8 @@ export async function runAgent(
     + designStylePrompt(ctx.getDoc().designStyle)
     + creativeModePrompt(findSkill(ctx.getCreativeMode()))
     + PLUGIN_SKILLS_INDEX
-    + agentSettingsPrompt(settings);
+    + agentSettingsPrompt(settings)
+    + (opts?.systemSuffix ? `\n\n${opts.systemSuffix}` : '');
 
   let reasoningFellBack = false;
   let toolTurns = 0;
