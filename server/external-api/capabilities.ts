@@ -4,12 +4,7 @@ import {
   EXTERNAL_EDIT_TOOL_NAMES,
   EXTERNAL_READ_TOOL_NAMES,
 } from '../../src/agent/external-tool-policy.ts';
-import {
-  buildLibraryItems,
-  LIBRARY_CATEGORIES,
-  type LibraryCategory,
-  type LibraryItem,
-} from '../../src/agent/tools/library-catalog.ts';
+import type { LibraryCategory, LibraryItem } from '../../src/agent/tools/library-catalog.ts';
 import { keyStatus } from '../keystore.ts';
 import { isExternalApiAuthorized } from './projects.ts';
 
@@ -37,6 +32,10 @@ const CATEGORY_ALIASES: Record<string, LibraryCategory> = {
   sfx: 'sound-effects',
   'motion-graphics': 'motion-graphics',
 };
+
+const LIBRARY_CATEGORIES: readonly LibraryCategory[] = [
+  'motion-graphics', 'luts', 'zoom', 'fx', 'audio-fx', 'sound-effects', 'transitions',
+];
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
@@ -227,6 +226,9 @@ export async function handleExternalCapabilitiesRequest(
     // The external server agent currently runs with templates:[].
     // Therefore this endpoint truthfully exposes server-available built-ins/custom
     // registrations, not browser-only template state.
+    // The editor catalog imports shader assets. Load it only for an actual
+    // catalog request so ordinary API calls and server tests stay Node-safe.
+    const { buildLibraryItems } = await import('../../src/agent/tools/library-catalog.ts');
     let items = buildLibraryItems([]);
     if (category) items = items.filter((item) => item.category === category);
     if (search) {
