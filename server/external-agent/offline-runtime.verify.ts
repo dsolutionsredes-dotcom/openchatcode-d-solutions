@@ -16,7 +16,7 @@ import { verifyOfflineCommitAndProjectionScenarios } from './offline-runtime-saf
 
 const toolNames = new Set(offlineExternalToolSchemas().map((schema) => schema.name));
 
-for (const allowed of ['begin_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'set_aspect_ratio', 'edit_captions', 'update_watermark']) {
+for (const allowed of ['begin_edit_session', 'approve_edit_session', 'reject_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'set_aspect_ratio', 'edit_captions', 'update_watermark']) {
   assert.equal(toolNames.has(allowed), true, `${allowed} is server-direct`);
 }
 for (const excluded of ['edit_item', 'manage_effects', 'view_timeline_frames', 'submit_image', 'import_media', 'download_media', 'manage_versions', 'submit_render_job']) {
@@ -27,17 +27,52 @@ for (const action of ['template', 'style', 'layout', 'display_text', 'source_set
 }
 
 const persistence = new MemoryPersistence(projectDoc());
-const runtime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
+const manualRuntime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
   persistence,
   isBrowserConnected: () => false,
 });
-assert.equal(runtime.binding().mode, 'offline');
-await assert.rejects(
-  () => runtime.execute('begin_edit_session', { approvalMode: 'manual' }),
-  (error) => error instanceof ExternalEditorCallError
-    && error.outcome === 'rejected'
-    && error.message.includes(editorUrl),
-);
+assert.equal(manualRuntime.binding().mode, 'offline');
+const manualBegin = await manualRuntime.execute('begin_edit_session', { approvalMode: 'manual' });
+assert.equal(manualBegin && typeof manualBegin === 'object' && 'approvalMode' in manualBegin, true);
+await manualRuntime.execute('discard_edit_session', { editSessionId: editSessionId(manualBegin) });
+await manualRuntime.dispose();
+
+const approvalPersistence = new MemoryPersistence(projectDoc());
+const approvalRuntime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
+  persistence: approvalPersistence,
+  isBrowserConnected: () => false,
+});
+const pendingId = editSessionId(await approvalRuntime.execute('begin_edit_session', { approvalMode: 'manual' }));
+await approvalRuntime.execute('set_aspect_ratio', { editSessionId: pendingId, ratio: '9:16', fit: 'contain' });
+const pending = await approvalRuntime.execute('review_edit_session', { editSessionId: pendingId, summary: 'Pending external cut' });
+assert.equal((pending as Record<string, unknown>).status, 'awaiting_review');
+assert.equal((pending as Record<string, unknown>).requiresApproval, true);
+assert.equal(approvalPersistence.commitCount, 0);
+assert.deepEqual(approvalPersistence.current, projectDoc(), 'pending proposal cannot mutate the stored project');
+const approved = await approvalRuntime.execute('approve_edit_session', { editSessionId: pendingId });
+assert.equal((approved as Record<string, unknown>).status, 'applied');
+assert.equal(approvalPersistence.commitCount, 1);
+assert.equal(approvalPersistence.current.timelines[0].width, 1080);
+await approvalRuntime.dispose();
+
+const rejectionPersistence = new MemoryPersistence(projectDoc());
+const rejectionRuntime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
+  persistence: rejectionPersistence,
+  isBrowserConnected: () => false,
+});
+const rejectionId = editSessionId(await rejectionRuntime.execute('begin_edit_session', { approvalMode: 'manual' }));
+await rejectionRuntime.execute('set_aspect_ratio', { editSessionId: rejectionId, ratio: '1:1', fit: 'contain' });
+await rejectionRuntime.execute('review_edit_session', { editSessionId: rejectionId });
+const rejected = await rejectionRuntime.execute('reject_edit_session', { editSessionId: rejectionId });
+assert.equal((rejected as Record<string, unknown>).status, 'rejected');
+assert.equal(rejectionPersistence.commitCount, 0);
+assert.deepEqual(rejectionPersistence.current, projectDoc(), 'rejected proposal cannot mutate the stored project');
+await rejectionRuntime.dispose();
+const autoPersistence = new MemoryPersistence(projectDoc());
+const runtime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
+  persistence: autoPersistence,
+  isBrowserConnected: () => false,
+});
 await assert.rejects(
   () => runtime.execute('begin_edit_session', { approvalMode: 'automatic' }),
   (error) => error instanceof ExternalEditorCallError
@@ -45,7 +80,7 @@ await assert.rejects(
     && error.message.includes('approvalMode'),
   'offline lifecycle arguments are validated against the active external schema',
 );
-assert.equal(persistence.commitCount, 0);
+assert.equal(autoPersistence.commitCount, 0);
 
 
 const begun = await runtime.execute('begin_edit_session', { approvalMode: 'auto', clientName: 'External editor' });
@@ -61,8 +96,8 @@ for (const action of ['preset_apply', 'preset_delete', 'preset_list', 'preset_re
 const untouchedSession = await runtime.execute('get_edit_session', { editSessionId: sessionId });
 assert(untouchedSession && typeof untouchedSession === 'object' && 'operationCount' in untouchedSession);
 assert.equal(untouchedSession.operationCount, 0);
-assert.deepEqual(persistence.current, projectDoc());
-assert.equal(persistence.commitCount, 0);
+assert.deepEqual(autoPersistence.current, projectDoc());
+assert.equal(autoPersistence.commitCount, 0);
 await assert.rejects(
   () => runtime.execute('set_aspect_ratio', {
     editSessionId: sessionId,
@@ -80,8 +115,8 @@ await assert.rejects(
     && error.message.includes('not active'),
   'tools outside the registered offline catalog fail closed',
 );
-assert.equal(persistence.checkpoint, null);
-assert.equal(persistence.commitCount, 0);
+assert.equal(autoPersistence.checkpoint, null);
+assert.equal(autoPersistence.commitCount, 0);
 const read = await runtime.execute('read_timeline', { editSessionId: sessionId });
 assert(read && typeof read === 'object');
 await assert.rejects(
@@ -89,15 +124,15 @@ await assert.rejects(
   (error) => error instanceof ExternalEditorCallError && error.outcome === 'rejected',
 );
 await runtime.execute('set_aspect_ratio', { editSessionId: sessionId, ratio: '9:16', fit: 'contain' });
-assert(persistence.checkpoint, 'each successful offline mutation persists a draft checkpoint');
+assert(autoPersistence.checkpoint, 'each successful offline mutation persists a draft checkpoint');
 const applied = await runtime.execute('review_edit_session', { editSessionId: sessionId, summary: 'Vertical cut' });
 assert(applied && typeof applied === 'object' && 'status' in applied);
 assert.equal(applied.status, 'applied');
-assert.equal(persistence.current.timelines[0].width, 1080);
-assert.equal(persistence.current.timelines[0].height, 1920);
-assert.equal(persistence.versions.length, 1);
-assert.deepEqual(persistence.versions[0], projectDoc());
-assert.equal(persistence.checkpoint, null, 'applied sessions remove their draft checkpoint');
+assert.equal(autoPersistence.current.timelines[0].width, 1080);
+assert.equal(autoPersistence.current.timelines[0].height, 1920);
+assert.equal(autoPersistence.versions.length, 1);
+assert.deepEqual(autoPersistence.versions[0], projectDoc());
+assert.equal(autoPersistence.checkpoint, null, 'applied sessions remove their draft checkpoint');
 
 const resumeStore = new MemoryPersistence(projectDoc());
 const interruptedRuntime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
