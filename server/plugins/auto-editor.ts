@@ -100,12 +100,27 @@ function responseLanguage(value: unknown): string {
   return normalized;
 }
 
-function runMessage(run: { events: readonly { type: string; data: unknown }[] }): string {
-  return run.events
+export function finalVisibleRunMessage(run: { events: readonly { type: string; data: unknown }[] }): string {
+  let lastTextStart = -1;
+  for (let index = run.events.length - 1; index >= 0; index -= 1) {
+    if (run.events[index]?.type === 'text-start') {
+      lastTextStart = index;
+      break;
+    }
+  }
+  return run.events.slice(lastTextStart + 1)
     .filter((event) => event.type === 'text-delta' && event.data && typeof event.data === 'object')
     .map((event) => (event.data as Record<string, unknown>).text)
     .filter((text): text is string => typeof text === 'string')
     .join('');
+}
+
+function runMessage(run: { events: readonly { type: string; data: unknown }[] }): string {
+  return finalVisibleRunMessage(run);
+}
+
+export function requiresUserInputFor(status: string): boolean {
+  return status === 'pending_approval' || status === 'needs_clarification';
 }
 
 function autoStatus(runtimeInfo: Record<string, unknown> | null, runStatus: string): string {
@@ -175,7 +190,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
       approvalStatus: status === 'pending_approval' ? 'pending' : status,
       ...(session ?? {}),
     },
-    requiresUserInput: status === 'pending_approval',
+    requiresUserInput: requiresUserInputFor(status),
     errorCode: run.error ?? '',
     projectId,
     runId: run.id,
