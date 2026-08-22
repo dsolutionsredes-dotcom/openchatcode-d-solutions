@@ -71,6 +71,26 @@ export const EXTERNAL_SESSION_TOOLS: readonly ExternalRegisteredTool[] = [
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: 'approve_edit_session',
+    description: 'Approve the pending external proposal and atomically apply it to the stored project.',
+    input_schema: {
+      type: 'object',
+      properties: { editSessionId: SESSION_ID_PROPERTY },
+      required: ['editSessionId'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'reject_edit_session',
+    description: 'Reject the pending external proposal without changing the stored project.',
+    input_schema: {
+      type: 'object',
+      properties: { editSessionId: SESSION_ID_PROPERTY },
+      required: ['editSessionId'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
 ];
 
 function withSession(tool: AgentToolSchema, description: string): ExternalRegisteredTool {
