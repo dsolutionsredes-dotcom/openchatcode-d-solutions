@@ -16,8 +16,10 @@ import { TRANSCRIPT_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/transcrip
 import { WATERMARK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/watermark-tools.js';
 
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
-  begin_edit_session: 'Start an offline server draft. approvalMode must be auto; open the editor URL for manual approval.',
-  review_edit_session: 'Atomically commit the complete offline draft and return terminal status applied, or write nothing.',
+  begin_edit_session: 'Start an offline server draft. Manual mode creates a durable pending proposal; auto mode applies at review.',
+  review_edit_session: 'Finish the offline draft. Manual mode returns a pending proposal; auto mode atomically commits it.',
+  approve_edit_session: 'Approve and atomically commit the pending offline proposal.',
+  reject_edit_session: 'Reject the pending offline proposal without changing the stored project.',
   edit_captions: 'Edit built-in caption template, style, layout, text, source, and language data. preset_* actions require the browser editor.',
 };
 
