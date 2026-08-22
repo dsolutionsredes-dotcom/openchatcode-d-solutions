@@ -125,8 +125,8 @@ function mcpStatus(session: McpSession): Record<string, unknown> {
     sessionBinding: session.binding ?? session.offline?.binding() ?? null,
     bindingMode: mode,
     availableToolTier: mode === 'offline' || (!mode && !connected.length) ? 'server-direct' : 'browser',
-    offlineFallback: 'Target an existing stored project with no browser owner, then begin with approvalMode="auto".',
-    browserRequiredFor: ['visual/canvas inspection', 'generation', 'upload', 'network', 'preset', 'render', 'export', 'manual approval'],
+    offlineFallback: 'Target an existing stored project with no browser owner. Server-direct tools support manual or auto edit-session approval.',
+    browserRequiredFor: ['visual/canvas inspection', 'generation', 'upload', 'network', 'preset', 'render', 'export'],
     toolCount: mcpTools(session).length,
     ...mcpToolExposureStatus(session.exposure, mcpTools(session).length, fullMcpTools(session).length),
   };
@@ -257,7 +257,7 @@ function makeServer(baseUrl: string, session: McpSession): Server {
       instructions: [
         `OpenChatCut external skill baseline: ${OPENCHATCUT_SKILL_BASELINE}. Update with npx skills update openchatcut when the installed skill is older.`,
         'Bind this MCP transport with target_project before editing. A connected browser is preferred; an existing stored project can use the offline fallback when no browser owns it.',
-        'The target response and openchatcut_status report bindingMode. Offline bindings expose only server-direct data tools and require approvalMode="auto".',
+        'The target response and openchatcut_status report bindingMode. Offline bindings expose only server-direct data tools and support manual or auto edit-session approval.',
         session.exposure.mode === 'progressive'
           ? 'This client negotiated progressive tool exposure. Call ToolSearch or load_skill to reveal task tools; tools/list_changed is sent when the visible set grows.'
           : 'This client uses the compatibility tool surface. All currently available tools are listed.',
