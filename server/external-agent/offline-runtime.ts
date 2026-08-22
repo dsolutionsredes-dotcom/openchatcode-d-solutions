@@ -8,11 +8,18 @@ import {
   forkExternalEditSession,
   restoreDraftingExternalEditSession,
   reviewExternalEditSession,
+  restoreExternalEditSession,
   type ExternalEditSession,
   type ExternalEditSessionTerminalStatus,
 } from '../../src/agent/external-edit-session.ts';
+import {
+  loadExternalProposal,
+  saveExternalProposal,
+} from '../../src/persist/externalProposalStore.ts';
+import { storedExternalSession } from '../../src/agent/external-bridge-session.ts';
 import { assertOfflineToolAllowed } from './offline-tool-authorization.ts';
 import type { AgentContext } from '../../src/agent/context.ts';
+import { replayActions } from '../../src/editor/store.ts';
 import { ExternalEditorCallError, isProjectConnected } from './broker.ts';
 import { executeOfflineTool } from './offline-executor.ts';
 import { captureCheckpointedToolOutcome } from './offline-outcome.ts';
@@ -62,6 +69,7 @@ export class OfflineExternalEditRuntime {
   private readonly persistence: OfflineEditPersistence;
   private readonly browserConnected: (projectId: string) => boolean;
   private readonly executeTool: typeof executeOfflineTool;
+  private readonly durableExternalProposal: boolean;
   private operationTail: Promise<void> = Promise.resolve();
   private expectedRevision: string;
   private baseDoc: OfflineStoredProject['doc'];
@@ -83,6 +91,7 @@ export class OfflineExternalEditRuntime {
     this.persistence = dependencies.persistence ?? DEFAULT_PERSISTENCE;
     this.browserConnected = dependencies.isBrowserConnected ?? isProjectConnected;
     this.executeTool = dependencies.executeTool ?? executeOfflineTool;
+    this.durableExternalProposal = dependencies.persistence === undefined;
   }
 
   static async create(
@@ -110,6 +119,12 @@ export class OfflineExternalEditRuntime {
   binding(): OfflineEditorBinding {
     return { mode: 'offline', projectId: this.projectId, baseRevision: this.expectedRevision };
   }
+
+  currentSessionInfo(): Record<string, unknown> | null {
+    const active = [...this.sessions.values()].find(({ session }) =>
+      ACTIVE_SESSION_STATUSES[session.status] === true);
+    return active ? this.info(active.session) : null;
+  }
   async validateAvailability(): Promise<void> {
     return this.runExclusive(() => this.validateAvailabilityLocked());
   }
@@ -118,7 +133,9 @@ export class OfflineExternalEditRuntime {
     validateOfflineInvocation(name, rawArgs);
     const terminal = name === 'get_edit_session' ? this.sessions.get(requiredSessionId(rawArgs)) : undefined;
     if (terminal && !ACTIVE_SESSION_STATUSES[terminal.session.status]) return this.info(terminal.session);
-    const releaseAfter = name === 'review_edit_session' || name === 'discard_edit_session';
+    const releaseAfter = name === 'discard_edit_session'
+      || name === 'approve_edit_session'
+      || name === 'reject_edit_session';
     return this.runExclusive(async () => {
       try {
         await this.validateAvailabilityLocked();
@@ -128,6 +145,8 @@ export class OfflineExternalEditRuntime {
         if (name === 'get_edit_session') return this.info(state.session);
         if (name === 'discard_edit_session') return await this.discard(state);
         if (name === 'review_edit_session') return await this.review(state, args.summary);
+        if (name === 'approve_edit_session') return await this.approve(state);
+        if (name === 'reject_edit_session') return await this.reject(state);
         delete args.editSessionId;
         return await this.runEditorTool(state, name, args);
       } catch (error) {
@@ -188,11 +207,28 @@ export class OfflineExternalEditRuntime {
     const active = [...this.sessions.values()]
       .find(({ session }) => ACTIVE_SESSION_STATUSES[session.status] === true);
     if (active) throw new Error(`Resolve or discard active edit session ${active.session.id} first.`);
-    if (approvalMode !== 'auto') {
-      throw new ExternalEditorCallError(
-        'rejected',
-        `Offline editing requires approvalMode="auto". Open ${this.editorUrl} for manual approval.`,
-      );
+    const stored = this.durableExternalProposal ? await loadExternalProposal(this.projectId) : null;
+    if (stored?.status === 'awaiting_review'
+      && stored.baseRevision === this.expectedRevision
+      && stored.proposal) {
+      const resumed = restoreExternalEditSession({
+        sessionId: stored.sessionId,
+        clientName: stored.clientName,
+        approvalMode: stored.approvalMode,
+        status: 'awaiting_review',
+        baseRevision: stored.baseRevision,
+        createdAt: stored.createdAt,
+        operationCount: stored.operationCount,
+        proposal: stored.proposal,
+      }, this.baseDoc);
+      const run = await openOfflineSessionRun(this.projectId, resumed, true);
+      this.runs.set(resumed.id, run);
+      this.sessions.set(resumed.id, { session: resumed, generation: 0 });
+      return { ...this.info(resumed), resumed: true, requiresApproval: true };
+    }
+    const mode = approvalMode === undefined ? 'manual' : approvalMode;
+    if (mode !== 'auto' && mode !== 'manual') {
+      throw new Error('approvalMode must be "manual" or "auto".');
     }
     const checkpoint = await this.persistence.loadCheckpoint?.(
       this.projectId,
@@ -200,7 +236,7 @@ export class OfflineExternalEditRuntime {
     );
     const session = checkpoint
       ? restoreDraftingExternalEditSession(checkpoint, this.baseDoc)
-      : createExternalEditSession(this.baseDoc, clientName, approvalMode);
+      : createExternalEditSession(this.baseDoc, clientName, mode);
     const run = await openOfflineSessionRun(
       this.projectId,
       session,
@@ -273,15 +309,16 @@ export class OfflineExternalEditRuntime {
     summary: unknown,
   ): Promise<Record<string, unknown>> {
     const session = state.session;
-    if (session.approvalMode !== 'auto') {
-      throw new ExternalEditorCallError('rejected', `Open ${this.editorUrl} to review a manual edit session.`);
-    }
     const draftDoc = session.draft?.getDoc();
     if (!draftDoc) throw new Error(`Edit session ${session.id} is ${session.status}, not drafting.`);
     const run = this.requireRun(session.id);
     const reviewedState = this.publishSession(state, reviewExternalEditSession(session, summary));
     const proposalId = reviewedState.session.proposal?.id;
     if (proposalId) await run.proposal(proposalId, 'created');
+    await this.persistExternalProposal(reviewedState.session, 'awaiting_review', undefined, run.runId);
+    if (reviewedState.session.approvalMode === 'manual') {
+      return { ...this.info(reviewedState.session), requiresApproval: true, approvalStatus: 'pending' };
+    }
     let result: OfflineProjectCommitResult;
     try {
       result = await this.commitReviewedDraft(reviewedState, draftDoc);
@@ -297,6 +334,35 @@ export class OfflineExternalEditRuntime {
       }));
     }
     return this.publishReviewedCommit(reviewedState, draftDoc, run, proposalId, result);
+  }
+
+  private async approve(state: VersionedOfflineSession): Promise<Record<string, unknown>> {
+    if (state.session.status !== 'awaiting_review' || !state.session.proposal) {
+      throw new ExternalEditorCallError('rejected', `Edit session ${state.session.id} has no pending proposal.`);
+    }
+    const option = state.session.proposal.options[0];
+    const draftDoc = option
+      ? replayActions(state.session.proposal.baseDoc, option.operations.flatMap((operation) => operation.actions))
+      : null;
+    if (!draftDoc) throw new ExternalEditorCallError('failed', 'Pending proposal has no draft document.');
+    const run = this.requireRun(state.session.id);
+    const result = await this.commitReviewedDraft(state, draftDoc);
+    if (!isAppliedOfflineCommit(result)) {
+      return this.failReview(state, run, state.session.proposal.id,
+        rejectedOfflineCommit({ result, disposed: this.disposed, projectId: this.projectId, editorUrl: this.editorUrl }));
+    }
+    return this.publishReviewedCommit(state, draftDoc, run, state.session.proposal.id, result);
+  }
+
+  private async reject(state: VersionedOfflineSession): Promise<Record<string, unknown>> {
+    if (state.session.status !== 'awaiting_review') {
+      throw new ExternalEditorCallError('rejected', `Edit session ${state.session.id} has no pending proposal.`);
+    }
+    const run = this.requireRun(state.session.id);
+    const rejected = this.publishSession(state, finishExternalEditSession(state.session, 'rejected'));
+    await this.persistExternalProposal(rejected.session, 'rejected', 0, run.runId);
+    await run.proposal(state.session.proposal?.id ?? '', 'rejected').catch(() => undefined);
+    return { ...this.info(rejected.session), requiresApproval: false, approvalStatus: 'rejected' };
   }
 
   private async failReview(
@@ -331,7 +397,9 @@ export class OfflineExternalEditRuntime {
       'applied',
       state.session.operationCount,
     );
-    const info = this.info(this.publishAppliedSession(state, applied).session);
+    const appliedState = this.publishAppliedSession(state, applied);
+    await this.persistExternalProposal(appliedState.session, 'applied', state.session.operationCount, run.runId);
+    const info = this.info(appliedState.session);
     warning = await publishAppliedOfflineReview(run, proposalId, warning);
     return warning ? { ...info, warning } : info;
   }
@@ -492,8 +560,27 @@ export class OfflineExternalEditRuntime {
       appliedOperationCount: session.appliedOperationCount,
       bindingMode: 'offline',
       agentRunId: this.runs.get(session.id)?.runId,
+      proposalId: session.proposal?.id,
+      proposalSummary: session.proposal?.summary,
+      requiresApproval: session.status === 'awaiting_review' && session.approvalMode === 'manual',
+      approvalStatus: session.status === 'awaiting_review' ? 'pending' : session.status,
       editorUrl: this.editorUrl,
       updatedAt: new Date(session.updatedAt).toISOString(),
     };
+  }
+
+  private async persistExternalProposal(
+    session: ExternalEditSession,
+    status: 'awaiting_review' | 'applied' | 'rejected',
+    appliedOperationCount?: number,
+    runId?: string,
+  ): Promise<void> {
+    if (!this.durableExternalProposal) return;
+    await saveExternalProposal(this.projectId, storedExternalSession(
+      session,
+      status,
+      appliedOperationCount,
+      runId,
+    ));
   }
 }
