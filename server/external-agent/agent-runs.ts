@@ -58,16 +58,16 @@ function draftDocFromProposal(proposal: Proposal) {
 }
 
 /**
- * Make the external response agree with the pending proposal state.
- *
- * A model summary can describe the draft as if it were already applied. Do
- * not try to correct individual verbs here: the proposal state is the source
- * of truth, so pending edits receive a neutral status message for every kind
- * of operation.
+ * Telegram has no proposal card. Keep the agent's own summary, but state the
+ * proposal status before it so a draft result is never presented as committed.
  */
-function pendingApprovalText(operationCount: number): string {
-  const noun = operationCount === 1 ? 'un cambio' : `${operationCount} cambios`;
-  return `He preparado una propuesta con ${noun}. Todavía no se ha aplicado.\n\n¿Quieres aprobarla o prefieres rechazarla?`;
+function pendingApprovalText(summary: string): string {
+  const proposedResult = summary.trim();
+  return [
+    'Hay una propuesta pendiente de aprobación. Todavía no se ha aplicado.',
+    ...(proposedResult ? [`Resultado propuesto:\n${proposedResult}`] : []),
+    '¿Quieres aprobarla o rechazarla?',
+  ].join('\n\n');
 }
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
@@ -178,6 +178,7 @@ export async function createExternalAgentRun(
       ? draftDocFromProposal(continuation.proposal)
       : doc;
 
+    let finalResultMessages: unknown[] = [];
     for (const [index, config] of configs.entries()) {
       run.error = null;
       run.assistantText = '';
@@ -220,6 +221,7 @@ export async function createExternalAgentRun(
 
       if (!run.error) {
         currentSession = attemptSession;
+        finalResultMessages = resultMessages;
         run.providerUsed = config.provider;
         run.modelUsed = config.model;
         run.assistantText = latestTurnText.trim();
@@ -236,7 +238,7 @@ export async function createExternalAgentRun(
     if (run.error) throw new Error(run.error);
 
     if (currentSession?.operationCount) {
-      const approvalText = pendingApprovalText(currentSession.operationCount);
+      const approvalText = pendingApprovalText(run.assistantText);
       if (continuation?.proposal && currentSession.draft) {
         const combinedOperations = [
           ...proposalOperations(continuation.proposal),
@@ -268,7 +270,7 @@ export async function createExternalAgentRun(
       }
     }
 
-    await appendConversation(resultMessages, run.assistantText);
+    await appendConversation(finalResultMessages, run.assistantText);
     run = { ...run, status: 'succeeded', updatedAt: Date.now() };
     await saveExternalAgentRun(run);
 
