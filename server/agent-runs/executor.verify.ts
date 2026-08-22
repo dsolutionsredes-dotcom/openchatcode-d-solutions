@@ -12,7 +12,9 @@ import {
   resolveServerRunMaxOutputTokens,
   serverRunTextMetadata,
   turnDisposition,
+  executeBrowserTool,
 } from './executor.ts';
+import { ToolActivation } from '../../src/agent/tool-activation.ts';
 import { MODEL_CAPABILITY_OVERRIDES_KEY } from '../../shared/model-capabilities';
 import { seedKeystore } from '../keystore';
 import {
@@ -153,6 +155,29 @@ assert.deepEqual(
   'server runs honor the same long Anthropic cache policy as browser API mode',
 );
 resetServerRunStoreForTest();
+
+const headlessRun = createRun({
+  projectId: 'server-headless-tool',
+  sessionGeneration: 'headless-test',
+  provider: 'deepseek',
+  model: 'test-model',
+});
+const headlessSchema = TOOL_SCHEMAS.find((schema) => schema.name === 'read_project');
+assert(headlessSchema, 'read_project exists in the canonical tool catalog');
+let headlessInvoked = false;
+const headlessActivation = {
+  current: new ToolActivation([headlessSchema], [], [headlessSchema.name]),
+  tail: Promise.resolve(),
+  followupText: null,
+  executeTool: async () => { headlessInvoked = true; return { ok: true, mode: 'server-direct' }; },
+};
+const headlessResult = await executeBrowserTool(headlessRun, headlessSchema, {}, 'headless-call', headlessActivation);
+assert.deepEqual(headlessResult, { ok: true, mode: 'server-direct', activatedTools: [] });
+assert.equal(headlessInvoked, true, 'server-direct callback executed without a browser');
+assert.equal(headlessRun.toolRequests.size, 0, 'server-direct execution does not wait for a browser tool result');
+console.log('server executor headless tool path verification passed');
+
+resetServerRunStoreForTest();
 const outputRun = createRun({
   projectId: 'server-output-bounds',
   sessionGeneration: 'legacy',
@@ -290,4 +315,3 @@ assert.equal(
   'local providers without an override still resolve to the unknown-model fallback',
 );
 console.log('server executor capability-override checks passed');
-
