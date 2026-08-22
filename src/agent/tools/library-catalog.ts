@@ -4,14 +4,12 @@
 
 import { SOUND_EFFECTS } from '../../audio/soundLibrary';
 import {
-  TRANSITION_LABELS,
-  TRANSITION_ORDER,
-  ZOOM_SHAPE_LABELS,
-  ZOOM_SHAPE_ORDER,
   type TransitionType,
   type ZoomShape,
 } from '../../editor/types';
-import { CUSTOM_FX, FX_EFFECTS, FX_IDS, LUT_EFFECTS, LUT_IDS } from '../../gl/fx/effects';
+import { TRANSITION_LABELS, TRANSITION_ORDER, ZOOM_SHAPE_LABELS, ZOOM_SHAPE_ORDER } from '../../editor/library-metadata';
+import { CUSTOM_FX } from '../../gl/fx/customFxRegistry';
+import { FX_METADATA, FX_ORDER, LUT_METADATA, LUT_ORDER } from '../../gl/fx/fx-metadata';
 import { listCustomTransitions } from '../../gl/customTransitions';
 import { listCustomZooms } from '../../editor/customZooms';
 import type { Tpl } from '../../types';
@@ -95,8 +93,8 @@ export function buildLibraryItems(templates: Tpl[]): LibraryItem[] {
     });
   }
 
-  for (const id of LUT_IDS) {
-    const d = LUT_EFFECTS[id];
+  for (const id of LUT_ORDER) {
+    const d = LUT_METADATA[id];
     if (!d) continue;
     items.push({
       id: d.id,
@@ -117,8 +115,8 @@ export function buildLibraryItems(templates: Tpl[]): LibraryItem[] {
     });
   }
 
-  for (const id of FX_IDS) {
-    const d = FX_EFFECTS[id];
+  for (const id of FX_ORDER) {
+    const d = FX_METADATA[id];
     if (!d) continue;
     items.push({
       id: d.id,

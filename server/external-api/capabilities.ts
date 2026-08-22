@@ -4,7 +4,11 @@ import {
   EXTERNAL_EDIT_TOOL_NAMES,
   EXTERNAL_READ_TOOL_NAMES,
 } from '../../src/agent/external-tool-policy.ts';
-import type { LibraryCategory, LibraryItem } from '../../src/agent/tools/library-catalog.ts';
+import {
+  buildLibraryItems,
+  type LibraryCategory,
+  type LibraryItem,
+} from '../../src/agent/tools/library-catalog.ts';
 import { keyStatus } from '../keystore.ts';
 import { isExternalApiAuthorized } from './projects.ts';
 
@@ -223,12 +227,8 @@ export async function handleExternalCapabilitiesRequest(
     const rawLimit = Number(url.searchParams.get('limit') ?? 100);
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(250, Math.floor(rawLimit))) : 100;
 
-    // The external server agent currently runs with templates:[].
-    // Therefore this endpoint truthfully exposes server-available built-ins/custom
-    // registrations, not browser-only template state.
-    // The editor catalog imports shader assets. Load it only for an actual
-    // catalog request so ordinary API calls and server tests stay Node-safe.
-    const { buildLibraryItems } = await import('../../src/agent/tools/library-catalog.ts');
+    // The external server agent currently runs with templates:[]. The catalog
+    // builder is deliberately shader-free, so this remains safe in VPS/headless mode.
     let items = buildLibraryItems([]);
     if (category) items = items.filter((item) => item.category === category);
     if (search) {

@@ -51,6 +51,9 @@ import halftoneFrag from './halftone.frag?raw';
 import motionBlurFrag from './motion-blur.frag?raw';
 import type { FxDef, SerializableFxDef } from './uniforms';
 import type { FxPass } from '../runtime';
+import { FX_METADATA, LUT_METADATA } from './fx-metadata';
+import { CUSTOM_FX } from './customFxRegistry';
+export { CUSTOM_FX } from './customFxRegistry';
 
 // invert is modeled as a 0/1 slider.
 const INVERT = { key: 'invert', label: '反转', default: 0, min: 0, max: 1, step: 1 };
@@ -64,7 +67,7 @@ const INVERT = { key: 'invert', label: '反转', default: 0, min: 0, max: 1, ste
 export type { FxDef, FxProperty } from './uniforms';
 export { fxUniform, fxUniforms } from './uniforms';
 
-export const FX_EFFECTS: Record<string, FxDef> = {
+const FX_EFFECT_DEFS: Record<string, FxDef> = {
   'builtin:fx-luma-key': {
     id: 'builtin:fx-luma-key',
     name: '黑底叠加',
@@ -461,6 +464,11 @@ export const FX_EFFECTS: Record<string, FxDef> = {
   },
 };
 
+/** Attach the browser-independent catalog metadata to the render definitions. */
+export const FX_EFFECTS: Record<string, FxDef> = Object.fromEntries(
+  Object.entries(FX_EFFECT_DEFS).map(([id, def]) => [id, { ...def, ...FX_METADATA[id] }]),
+);
+
 /** Core library order first, followed by extended effects. */
 export const FX_ORDER = [
   'builtin:fx-rect-mask',
@@ -507,7 +515,7 @@ export const FX_IDS = [
 // separate from FX so the library shows them under their own LUT tab, but they
 // render through the same per-clip GL pipeline. intensity mixes original↔graded
 // through propertyOverrides.intensity.
-export const LUT_EFFECTS: Record<string, FxDef> = {
+const LUT_EFFECT_DEFS: Record<string, FxDef> = {
   'builtin:slog3-s709': {
     id: 'builtin:slog3-s709',
     name: 'Sony S-Log3 → s709',
@@ -683,6 +691,9 @@ export const LUT_EFFECTS: Record<string, FxDef> = {
     ],
   },
 };
+export const LUT_EFFECTS: Record<string, FxDef> = Object.fromEntries(
+  Object.entries(LUT_EFFECT_DEFS).map(([id, def]) => [id, { ...def, ...LUT_METADATA[id] }]),
+);
 export const LUT_ORDER = [
   'builtin:slog3-s709',
   'builtin:canon-log3-709',
@@ -717,8 +728,6 @@ export const ALL_FX: Record<string, FxDef> = { ...FX_EFFECTS, ...LUT_EFFECTS };
 // 自定义条目，便于区分/枚举/测试。内置 fx 与 LUT 保持不变。
 // ponytail: 注册表本质是共享运行时状态，这里是唯一必须「原地改」的地方（唯一能让已
 // 捕获引用的 effect-tools 看到新 fx 的方式）；其余仍遵守不可变约定。
-export const CUSTOM_FX: Record<string, FxDef> = {};
-
 /** 通用 lut.frag 源码(插件 LUT def 用它 + 自己的 .cube URL 组装)。 */
 export const LUT_FRAG = lutFrag;
 
