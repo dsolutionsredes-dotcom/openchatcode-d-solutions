@@ -57,13 +57,17 @@ function draftDocFromProposal(proposal: Proposal) {
   );
 }
 
-/** Make the external response agree with the pending proposal state. */
-function pendingApprovalText(summary: string): string {
-  const safeSummary = (summary.trim() || 'He preparado el cambio.')
-    .replace(/\b(he|hemos)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado')
-    .replace(/\b(se ha|se han)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado')
-    .replace(/\b(está|esta)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado');
-  return `${safeSummary}\n\nEl cambio está pendiente de aprobación. ¿Quieres que lo aplique o prefieres rechazarlo?`;
+/**
+ * Make the external response agree with the pending proposal state.
+ *
+ * A model summary can describe the draft as if it were already applied. Do
+ * not try to correct individual verbs here: the proposal state is the source
+ * of truth, so pending edits receive a neutral status message for every kind
+ * of operation.
+ */
+function pendingApprovalText(operationCount: number): string {
+  const noun = operationCount === 1 ? 'un cambio' : `${operationCount} cambios`;
+  return `He preparado una propuesta con ${noun}. Todavía no se ha aplicado.\n\n¿Quieres aprobarla o prefieres rechazarla?`;
 }
 
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
@@ -232,7 +236,7 @@ export async function createExternalAgentRun(
     if (run.error) throw new Error(run.error);
 
     if (currentSession?.operationCount) {
-      const approvalText = pendingApprovalText(run.assistantText);
+      const approvalText = pendingApprovalText(currentSession.operationCount);
       if (continuation?.proposal && currentSession.draft) {
         const combinedOperations = [
           ...proposalOperations(continuation.proposal),
