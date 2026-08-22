@@ -73,6 +73,12 @@ export interface ActivationState {
   current: ToolActivation;
   tail: Promise<void>;
   followupText: string | null;
+  /** Optional server-direct executor used by an authenticated headless host. */
+  executeTool?: (
+    schema: AgentToolSchema,
+    args: Record<string, unknown>,
+    toolCallId: string,
+  ) => Promise<unknown>;
 }
 
 export interface ServerRunInput {
@@ -86,6 +92,8 @@ export interface ServerRunInput {
   readonly origin: string;
   readonly tools: readonly AgentToolSchema[];
   readonly instructions?: string;
+  /** When present, server-run tools execute through the official server-direct path. */
+  readonly headlessToolExecutor?: ActivationState['executeTool'];
 }
 
 type ServerTurnInput = Omit<ServerContextInput, 'schemas'> & {
@@ -123,6 +131,18 @@ export async function executeBrowserTool(
       args,
       argsDigest,
     });
+    if (activation.executeTool) {
+      const delivered = await activation.executeTool(schema, args, toolCallId);
+      pushRunEvent(run, 'tool-result', {
+        toolCallId,
+        name: schema.name,
+        argsDigest,
+        result: delivered,
+      });
+      const shaped = activation.current.withToolResult(schema.name, delivered);
+      activation.current = shaped.activation;
+      return shaped.result;
+    }
     const delivered = await waitForToolResult(
       run,
       toolCallId,
@@ -308,6 +328,7 @@ function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
     ),
     tail: Promise.resolve(),
     followupText: null,
+    ...(input.headlessToolExecutor ? { executeTool: input.headlessToolExecutor } : {}),
   };
   const prompt = buildServerRunPrompt({
     ...input,
