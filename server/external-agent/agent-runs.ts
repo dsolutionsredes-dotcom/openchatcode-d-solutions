@@ -57,6 +57,15 @@ function draftDocFromProposal(proposal: Proposal) {
   );
 }
 
+/** Make the external response agree with the pending proposal state. */
+function pendingApprovalText(summary: string): string {
+  const safeSummary = (summary.trim() || 'He preparado el cambio.')
+    .replace(/\b(he|hemos)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado')
+    .replace(/\b(se ha|se han)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado')
+    .replace(/\b(está|esta)\s+(aplicado|hecho|realizado|modificado|cambiado)\b/gi, '$1 preparado');
+  return `${safeSummary}\n\nEl cambio está pendiente de aprobación. ¿Quieres que lo aplique o prefieres rechazarlo?`;
+}
+
 export async function getExternalAgentRun(runId: string): Promise<ExternalAgentRun | undefined> {
   const run = await loadExternalAgentRun(runId);
   if (!run) return undefined;
@@ -210,7 +219,6 @@ export async function createExternalAgentRun(
         run.providerUsed = config.provider;
         run.modelUsed = config.model;
         run.assistantText = latestTurnText.trim();
-        await appendConversation(resultMessages, run.assistantText);
         break;
       }
       if (index < configs.length - 1) {
@@ -224,6 +232,7 @@ export async function createExternalAgentRun(
     if (run.error) throw new Error(run.error);
 
     if (currentSession?.operationCount) {
+      const approvalText = pendingApprovalText(run.assistantText);
       if (continuation?.proposal && currentSession.draft) {
         const combinedOperations = [
           ...proposalOperations(continuation.proposal),
@@ -231,21 +240,23 @@ export async function createExternalAgentRun(
         ];
         const proposal = buildProposal(
           combinedOperations,
-          run.assistantText,
+          approvalText,
           continuation.proposal.baseDoc,
           currentSession.draft.getState(),
         );
         run = {
           ...run,
+          assistantText: approvalText,
           proposal,
           requiresApproval: true,
           approvalStatus: 'pending',
           supersedesRunId: continuation.runId,
         };
       } else {
-        const reviewed = reviewExternalEditSession(currentSession, run.assistantText);
+        const reviewed = reviewExternalEditSession(currentSession, approvalText);
         run = {
           ...run,
+          assistantText: approvalText,
           proposal: reviewed.proposal,
           requiresApproval: true,
           approvalStatus: 'pending',
@@ -253,6 +264,7 @@ export async function createExternalAgentRun(
       }
     }
 
+    await appendConversation(resultMessages, run.assistantText);
     run = { ...run, status: 'succeeded', updatedAt: Date.now() };
     await saveExternalAgentRun(run);
 
