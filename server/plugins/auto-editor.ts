@@ -113,6 +113,7 @@ function autoStatus(runtimeInfo: Record<string, unknown> | null, runStatus: stri
   if (runtimeInfo?.status === 'applied') return 'applied';
   if (runtimeInfo?.status === 'rejected') return 'rejected';
   if (runStatus === 'failed') return 'failed';
+  if (runStatus === 'awaiting-user') return 'needs_clarification';
   if (runStatus === 'queued') return 'queued';
   if (runStatus === 'running') return 'running';
   return 'read';
