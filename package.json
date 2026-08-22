@@ -24,6 +24,8 @@
     "dev:shared": "vite --config config/vite.config.ts",
     "prebuild": "npm run sync:mediapipe && npm run sync:whisper-cli && npm run verify:server-tool-catalog",
     "build": "tsc -b && vite build --config config/vite.config.ts",
+    "build:vps": "esbuild server/vps-server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=server-dist/vps-server.mjs",
+    "start:vps": "node server-dist/vps-server.mjs",
     "update:model-capabilities": "node --use-env-proxy scripts/update-llm-model-capabilities.mjs",
     "verify:affected": "node scripts/run-affected-verifies.mjs",
     "verify:media-drag": "tsx src/media/drag.verify.ts",
