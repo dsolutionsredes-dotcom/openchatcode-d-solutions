@@ -48,6 +48,7 @@ import { llmProxyPlugin } from "./llm-proxy.ts";
 import { agentRunsPlugin } from "../agent-runs/routes.ts";
 import { resourcePreviewPlugin } from "./resource-preview.ts";
 import { getKey } from "../keystore.ts";
+import { autoEditorPlugin } from './auto-editor.ts';
 
 import { installSystemProxy } from '../net.ts';
 import { requestShapeGatePlugin } from './request-shape-gate';
@@ -60,6 +61,7 @@ export function serverPlugins(options: { projectStoreHttp?: boolean } = {}): Plu
     storageLifecyclePlugin(),
     llmProxyPlugin(),
     agentRunsPlugin(),
+    autoEditorPlugin(),
     skillFilesPlugin(),
     skillInstallPlugin(),
     skillExecPlugin(),
