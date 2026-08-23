@@ -91,7 +91,7 @@ function isInsideTranslation(node, sf) {
 }
 
 function issue(sf, node, message) {
-  const relative = path.relative(ROOT, sf.fileName);
+  const relative = path.relative(ROOT, sf.fileName).split(path.sep).join('/');
   const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
   return `${relative}:${line + 1}:${character + 1} ${message}`;
 }
@@ -233,7 +233,7 @@ function auditJsxExpression(sf, node, relative, initializers) {
 
 function auditUiFile(filePath, keys) {
   const sf = sourceFile(filePath);
-  const relative = path.relative(ROOT, filePath);
+  const relative = path.relative(ROOT, filePath).split(path.sep).join('/');
   const initializers = collectInitializers(sf);
   const issues = [];
   function visit(node) {
@@ -261,7 +261,7 @@ const keys = englishKeys();
 const sourceFiles = walk(SOURCE_ROOT).filter((filePath) => {
   if (!/\.tsx?$/.test(filePath)) return false;
   if (filePath.startsWith(path.join(SOURCE_ROOT, 'i18n'))) return false;
-  const relative = path.relative(ROOT, filePath);
+  const relative = path.relative(ROOT, filePath).split(path.sep).join('/');
   return !isTestFile(relative);
 });
 const translationIssues = sourceFiles.flatMap((filePath) => {
