@@ -125,6 +125,15 @@ export class OfflineExternalEditRuntime {
       ACTIVE_SESSION_STATUSES[session.status] === true);
     return active ? this.info(active.session) : null;
   }
+
+  /** Return the currently reviewed draft without touching the persisted project. */
+  currentProposalDoc(): OfflineStoredProject['doc'] | null {
+    const active = [...this.sessions.values()].find(({ session }) =>
+      session.status === 'awaiting_review' && session.proposal);
+    const option = active?.session.proposal?.options[0];
+    if (!option) return null;
+    return replayActions(active.session.proposal!.baseDoc, option.operations.flatMap((operation) => operation.actions));
+  }
   async validateAvailability(): Promise<void> {
     return this.runExclusive(() => this.validateAvailabilityLocked());
   }
