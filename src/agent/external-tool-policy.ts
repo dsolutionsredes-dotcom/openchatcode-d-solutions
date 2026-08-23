@@ -21,6 +21,7 @@ const DRAFT_EDIT_TOOL_NAMES = new Set([
 ]);
 
 const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
+  browse_library: true,
   read_timeline: true,
   read_agent_artifact: true,
   read_script: true,
@@ -31,6 +32,7 @@ const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
 };
 
 const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
+  edit_item: true,
   update_item_props: true,
   move_item: true,
   set_item_timing: true,
