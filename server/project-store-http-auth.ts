@@ -64,6 +64,31 @@ function browserEnforcedRequest(req: IncomingMessage): boolean {
   return site === 'same-origin' || site === 'none';
 }
 
+function configuredVpsOrigin(): string | null {
+  if (process.env.OPENCHATCUT_VPS !== '1') return null;
+  const raw = process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+/** VPS browser trust: exact configured public origin plus browser same-origin fetch metadata.
+ * This is CSRF protection, not user authentication; deployments needing per-user access
+ * must put the VPS behind their own authentication layer. */
+export function vpsWebHttpAuthorized(req: IncomingMessage): boolean {
+  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+  if (path !== '/api/keys' && !path.startsWith('/api/keys/')) return false;
+  const expected = configuredVpsOrigin();
+  const origin = header(req, 'origin');
+  const site = header(req, 'sec-fetch-site');
+  return Boolean(expected && origin && site === 'same-origin' && origin === expected);
+}
+
 /** Read-only access: loopback requests from same-origin pages (or direct
  *  local navigation) may read the active runtime profile's project library. */
 export function projectStoreReadAuthorized(req: IncomingMessage): boolean {
