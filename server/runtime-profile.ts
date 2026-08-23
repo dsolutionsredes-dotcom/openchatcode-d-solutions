@@ -4,6 +4,7 @@ import { readDataDirPointer } from './data-dir.ts';
 
 export const DEV_PROFILE_ID_ENV = 'OPENCHATCUT_DEV_PROFILE_ID';
 export const DATA_DIR_ENV = 'OPENCHATCUT_DATA_DIR';
+export const KEYSTORE_PATH_ENV = 'OPENCHATCUT_KEYSTORE_PATH';
 const DEV_PROFILE_ENV_PREFIX = 'OPENCHATCUT_DEV_PROFILE_';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -144,13 +145,17 @@ export function resolveRuntimeProfile(
   const rootDir = dataDir ?? join(home, '.openchatcut');
   const authOverride = env.OPENCHATCUT_PROJECT_STORE_AUTH_DIR?.trim();
   const generationOverride = env.OPENCHATCUT_GENERATION_JOB_STORE;
+  const keystoreOverride = env[KEYSTORE_PATH_ENV]?.trim();
+  if (keystoreOverride && !isAbsolute(keystoreOverride)) {
+    throw new Error(`${KEYSTORE_PATH_ENV} must be an absolute path (got: ${keystoreOverride})`);
+  }
   const base = profileBase(
     rootDir,
     // With a user-chosen data dir, media belongs next to the projects it
     // backs; the checkout-relative default only applies to the hidden root.
     dataDir ? join(dataDir, 'media', 'uploads') : join(cwd, 'public', 'media', 'uploads'),
     generationOverride ?? join(rootDir, 'generation-operations-v1.json'),
-    resolve(cwd, '.env.local'),
+    keystoreOverride ? resolve(keystoreOverride) : resolve(cwd, '.env.local'),
   );
   return Object.freeze({
     mode: 'default',
