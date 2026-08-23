@@ -18,10 +18,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   }
   return parsed as Record<string, unknown>;
 }
-import {
-  projectStoreHttpAuthorized,
-  projectStoreReadAuthorized,
-} from '../project-store-http-auth.ts';
+import { trustedEditorRequest } from '../editor-auth.ts';
 import { handleProjectStoreRequest, sendProjectStoreJson } from '../project-store-http.ts';
 import {
   clearSemanticVectors,
@@ -88,7 +85,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
         // Storage migration: status is read-only (loopback reads allowed),
         // the migration itself is a write and requires a real session.
         if (req.method === 'GET' && req.url === '/migrate-status') {
-          if (!projectStoreReadAuthorized(req) && !projectStoreHttpAuthorized(req)) {
+          if (!trustedEditorRequest(req, false)) {
             sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
             return;
           }
@@ -96,7 +93,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
           return;
         }
         if (req.method === 'POST' && req.url === '/migrate-cleanup') {
-          if (!projectStoreHttpAuthorized(req)) {
+          if (!trustedEditorRequest(req, true)) {
             sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
             return;
           }
@@ -110,7 +107,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
           return;
         }
         if (req.method === 'POST' && req.url === '/migrate') {
-          if (!projectStoreHttpAuthorized(req)) {
+          if (!trustedEditorRequest(req, true)) {
             sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
             return;
           }
@@ -127,7 +124,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
         }
         // Full-text search: read-only, no session needed (loopback same-origin).
         if (req.method === 'GET' && req.url?.startsWith('/search')) {
-          if (!projectStoreReadAuthorized(req) && !projectStoreHttpAuthorized(req)) {
+          if (!trustedEditorRequest(req, false)) {
             sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
             return;
           }
@@ -149,7 +146,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
         }
         // Hybrid search: text (FTS5) + visual (sqlite-vec) fused by RRF.
         if (req.method === 'POST' && req.url === '/hybrid-search') {
-          if (!projectStoreReadAuthorized(req) && !projectStoreHttpAuthorized(req)) {
+          if (!trustedEditorRequest(req, false)) {
             sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
             return;
           }
@@ -175,9 +172,7 @@ export function projectStorePlugin(options: { http?: boolean } = {}): Plugin {
           return;
         }
         const readOnly = req.method === 'GET';
-        const authorized = readOnly
-          ? projectStoreReadAuthorized(req) || projectStoreHttpAuthorized(req)
-          : projectStoreHttpAuthorized(req);
+        const authorized = trustedEditorRequest(req, !readOnly);
         if (!authorized) {
           sendProjectStoreJson(res, 403, { error: 'invalid project store session' });
           return;
