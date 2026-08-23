@@ -19,6 +19,7 @@ import {
   type ServerRunInput,
 } from '../agent-runs/executor.ts';
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
+import { mintImportUpload } from '../external-agent/import-token.ts';
 
 const CONVERSATION_LIMIT = 32;
 const CONVERSATION_KEY = (projectId: string) => `auto-editor-conversation:${projectId}`;
@@ -54,6 +55,10 @@ function projectIdOf(value: unknown): string {
 
 function publicOrigin(): string {
   return process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim() || `http://127.0.0.1:${process.env.PORT || '5199'}`;
+}
+
+function internalOrigin(): string {
+  return `http://127.0.0.1:${process.env.PORT || '5199'}`;
 }
 
 async function runtimeFor(projectId: string): Promise<OfflineExternalEditRuntime> {
@@ -199,10 +204,121 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   };
 }
 
+async function officialRender(body: Record<string, unknown>, preview: boolean): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  let project: OfflineStoredProject['doc'] | null;
+  if (preview) {
+    project = runtimeByProject.get(projectId)?.currentProposalDoc() ?? null;
+    if (!project) throw new Error('no pending proposal is available for preview');
+  } else {
+    project = (await loadOfflineStoredProject(projectId))?.doc ?? null;
+    if (!project) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
+  }
+  const requestBody = {
+    project,
+    timelineId: project.activeTimelineId,
+    format: 'video',
+    codec: 'h264',
+    resolution: preview ? '480p' : body.resolution,
+    name: typeof body.name === 'string' ? body.name : preview ? 'auto-editor-preview' : 'auto-editor-render',
+    ...(typeof body.fps === 'number' ? { fps: body.fps } : {}),
+    ...(typeof body.videoBitrate === 'number' ? { videoBitrate: body.videoBitrate } : {}),
+  };
+  const response = await fetch(`${internalOrigin()}/export/job`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof value?.error === 'string' ? value.error : `official export failed: HTTP ${response.status}`);
+  return { ok: true, projectId, preview, ...value, engine: 'openchatcut-official-export' };
+}
+
+async function officialRenderStatus(renderId: string, method: 'GET' | 'DELETE' = 'GET'): Promise<Record<string, unknown>> {
+  const response = await fetch(`${internalOrigin()}/export/job/${encodeURIComponent(renderId)}`, { method });
+  if (method === 'DELETE') return { ok: response.ok, renderId };
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof value?.error === 'string' ? value.error : `official export status failed: HTTP ${response.status}`);
+  return { ok: true, ...value, engine: 'openchatcut-official-export' };
+}
+
+async function createOfficialImportSession(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  const snapshot = await loadOfflineStoredProject(projectId);
+  if (!snapshot) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
+  const assetType = typeof body.assetType === 'string' ? body.assetType : '';
+  const filename = typeof body.filename === 'string' ? body.filename : '';
+  const contentType = typeof body.contentType === 'string' ? body.contentType : '';
+  const expectedBytes = body.size;
+  const requested = typeof body.assetId === 'string' ? body.assetId.trim() : '';
+  const existing = requested
+    ? (snapshot.doc.assets ?? []).find((asset) => asset.id === requested || asset.id.startsWith(requested))
+    : undefined;
+  if (requested && !existing) throw new Error(`asset not found: ${requested}`);
+  const assetId = existing?.id ?? randomUUID();
+  const sessionId = `sess_${randomUUID()}`;
+  const handoff = mintImportUpload({
+    sessionId,
+    assetId,
+    assetType,
+    filename,
+    projectId,
+    method: 'POST',
+    contentType,
+    expectedBytes,
+  });
+  return {
+    ok: true,
+    action: 'create_session',
+    projectId,
+    sessionId,
+    assetId,
+    existingAsset: Boolean(existing),
+    ...handoff,
+    uploadUrl: new URL(handoff.uploadUrl, publicOrigin()).href,
+    headers: { 'Content-Type': contentType, 'Content-Length': String(expectedBytes) },
+    state: 'awaiting_upload',
+    next: 'POST the exact bytes to uploadUrl, then call /api/auto-editor/import/finalize with the opaque receipt and measured metadata.',
+  };
+}
+
+async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  const runtime = await runtimeFor(projectId);
+  const started = await runtime.execute('begin_edit_session', { clientName: 'n8n-import', approvalMode: 'auto' });
+  const editSessionId = typeof started === 'object' && started && 'editSessionId' in started
+    ? String((started as Record<string, unknown>).editSessionId)
+    : '';
+  if (!editSessionId) throw new Error('official import session did not return an edit session id');
+  const finalized = await runtime.execute('finalize_uploaded_asset', {
+    ...body,
+    editSessionId,
+  });
+  if (finalized && typeof finalized === 'object' && 'error' in finalized) {
+    throw new Error(String((finalized as Record<string, unknown>).error));
+  }
+  const reviewed = await runtime.execute('review_edit_session', {
+    editSessionId,
+    summary: 'Official n8n media import',
+  });
+  await runtime.dispose();
+  runtimeByProject.delete(projectId);
+  return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!externalMcpAuthorized(req)) return send(res, 401, { ok: false, error: 'invalid OpenChatCut MCP token' });
   const url = new URL(req.url ?? '/', 'http://localhost');
   try {
+    if (req.method === 'POST' && url.pathname === '/import/session') return send(res, 201, await createOfficialImportSession(await readJson(req)));
+    if (req.method === 'POST' && url.pathname === '/import/finalize') return send(res, 200, await finalizeOfficialImport(await readJson(req)));
+    if (req.method === 'POST' && url.pathname === '/render') return send(res, 200, await officialRender(await readJson(req), false));
+    if (req.method === 'POST' && url.pathname === '/preview') return send(res, 200, await officialRender(await readJson(req), true));
+    if ((req.method === 'GET' || req.method === 'DELETE') && (url.pathname.startsWith('/render/') || url.pathname.startsWith('/preview/'))) {
+      const renderId = url.pathname.split('/').filter(Boolean)[1] ?? '';
+      if (!renderId) throw new Error('render id is required');
+      return send(res, 200, await officialRenderStatus(renderId, req.method));
+    }
     if (req.method === 'POST' && url.pathname === '/message') return send(res, 200, await createMessageRun(await readJson(req)));
     const parts = url.pathname.split('/').filter(Boolean);
     if (req.method === 'GET' && parts[0] === 'runs' && parts[1]) {
