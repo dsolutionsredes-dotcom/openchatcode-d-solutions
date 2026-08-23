@@ -45,6 +45,17 @@ export default {
   '可灵 Kling': 'Kling',
   'MiniMax 海螺': 'MiniMax Hailuo',
   '本地磁盘': 'Local Disk',
+  '网络代理': 'Network Proxy',
+  '界面': 'Interface',
+  '本地模型': 'Local Models',
+  '显示': 'Display',
+  '界面缩放': 'Interface scale',
+  '代理地址': 'Proxy address',
+  '例如 http://127.0.0.1:7890': 'For example, http://127.0.0.1:7890',
+  '统一配置服务端访问海外 API 使用的代理地址。': 'Shared proxy address for server access to overseas APIs.',
+  '界面缩放与显示相关设置。': 'Interface scale and display settings.',
+  '调整整个编辑器的缩放比例（80%–150%）。桌面版保存后立即生效，也可用 Ctrl/Cmd + +/- 快速调整、Ctrl/Cmd + 0 复位。浏览器版请使用浏览器自带缩放。': 'Adjust the editor scale (80%–150%). Desktop changes apply immediately; use Ctrl/Cmd + +/- to adjust or Ctrl/Cmd + 0 to reset. Use the browser zoom in web mode.',
+  '本地转写、节拍与音乐分析、画面语义搜索。模型按需安装，数据不出本机。': 'Local transcription, beat and music analysis, and visual semantic search. Models install on demand; data stays on this machine.',
 
   // ── capability group hint ──
   '对话与工具调用的核心，未配置无法对话。': 'Core of chat and tool calls — chat is unavailable until configured.',
