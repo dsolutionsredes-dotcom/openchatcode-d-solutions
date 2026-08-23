@@ -172,7 +172,11 @@ async function normalizeVideoSrc(src: string): Promise<{
 }> {
   if (!src.startsWith('/media/uploads/')) return { src };
   try {
-    const response = await fetch('/api/normalize-media', {
+    const origin = typeof location !== 'undefined' && location.origin
+      ? location.origin
+      : process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim()
+        || `http://127.0.0.1:${process.env.PORT || '5199'}`;
+    const response = await fetch(`${origin}/api/normalize-media`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ src }),
