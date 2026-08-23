@@ -7,16 +7,18 @@ import { useSyncExternalStore } from 'react';
 import { EN } from './dict/en';
 import EN_DATA from './dict/en/templates-data';
 import { ZH_DATA } from './dict/zh';
+import { ES } from './dict/es';
 
-export type Locale = 'zh' | 'en';
+export type Locale = 'zh' | 'en' | 'es';
 
 const STORAGE_KEY = 'cc.locale';
 
 function readInitial(): Locale {
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'en' ? 'en' : 'zh';
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === 'en' || stored === 'es' ? stored : 'es';
   } catch {
-    return 'zh';
+    return 'es';
   }
 }
 
@@ -33,13 +35,13 @@ export function setLocale(next: Locale): void {
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch { /* If the private mode cannot be saved, it will only affect this session */ }
-  document.documentElement.lang = next === 'en' ? 'en' : 'zh-CN';
+  document.documentElement.lang = next === 'en' ? 'en' : next === 'es' ? 'es' : 'zh-CN';
   subscribers.forEach((notify) => notify());
 }
 
 /** t('Selected {n}', { n: 3 }) - The Chinese original text is the key; the placeholder {name} has the same name in both languages. */
 export function t(zh: string, params?: Record<string, string | number>): string {
-  const raw = current === 'en' ? (EN[zh] ?? zh) : zh;
+  const raw = current === 'en' ? (EN[zh] ?? zh) : current === 'es' ? (ES[zh] ?? EN[zh] ?? zh) : zh;
   if (!params) return raw;
   return raw.replace(/\{(\w+)\}/g, (match, key: string) => (key in params ? String(params[key]) : match));
 }
