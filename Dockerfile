@@ -21,7 +21,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci
 COPY . .
 RUN npm run build && npm run build:vps
 
