@@ -16,10 +16,10 @@ import { verifyOfflineCommitAndProjectionScenarios } from './offline-runtime-saf
 
 const toolNames = new Set(offlineExternalToolSchemas().map((schema) => schema.name));
 
-for (const allowed of ['begin_edit_session', 'approve_edit_session', 'reject_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'set_aspect_ratio', 'edit_captions', 'update_watermark']) {
+for (const allowed of ['begin_edit_session', 'approve_edit_session', 'reject_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'browse_library', 'edit_item', 'set_aspect_ratio', 'edit_captions', 'update_watermark']) {
   assert.equal(toolNames.has(allowed), true, `${allowed} is server-direct`);
 }
-for (const excluded of ['edit_item', 'manage_effects', 'view_timeline_frames', 'submit_image', 'import_media', 'download_media', 'manage_versions', 'submit_render_job']) {
+for (const excluded of ['manage_effects', 'view_timeline_frames', 'submit_image', 'import_media', 'download_media', 'manage_versions', 'submit_render_job']) {
   assert.equal(toolNames.has(excluded), false, `${excluded} requires the browser editor`);
 }
 for (const action of ['template', 'style', 'layout', 'display_text', 'source_set', 'language_mode']) {
