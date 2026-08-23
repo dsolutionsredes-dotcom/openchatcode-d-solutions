@@ -15,6 +15,8 @@ import { TRACK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/track-tools.js
 import { TRANSCRIPT_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/transcript-tools.js';
 import { WATERMARK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/watermark-tools.js';
 import { UPLOAD_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/upload-tools.js';
+import { LIBRARY_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/library-tools.js';
+import { EDIT_ITEM_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/edit-item-tools.js';
 
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   begin_edit_session: 'Start an offline server draft. Manual mode creates a durable pending proposal; auto mode applies at review.',
@@ -23,6 +25,8 @@ const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   reject_edit_session: 'Reject the pending offline proposal without changing the stored project.',
   edit_captions: 'Edit built-in caption template, style, layout, text, source, and language data. preset_* actions require the browser editor.',
   finalize_uploaded_asset: 'Finalize a verified official upload receipt into the current project media pool.',
+  browse_library: 'Browse the current OpenChatCut metadata catalog without loading WebGL shaders.',
+  edit_item: 'Validate and apply catalog-backed data-only timeline edits in the offline draft.',
 };
 
 const OFFLINE_SCHEMA_GROUPS = [
@@ -37,6 +41,8 @@ const OFFLINE_SCHEMA_GROUPS = [
   READ_PROJECT_TOOL_SCHEMAS,
   TRANSCRIPT_TOOL_SCHEMAS,
   UPLOAD_TOOL_SCHEMAS,
+  LIBRARY_TOOL_SCHEMAS,
+  EDIT_ITEM_TOOL_SCHEMAS,
 ] as const;
 
 function serverDirectSchemas(): ExternalRegisteredTool[] {
