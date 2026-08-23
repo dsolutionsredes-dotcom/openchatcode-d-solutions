@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { atomicWriteFile } from "./plugins/project-store-durable.ts";
 import { AI_SDK_BASE_URL_FORMAT, resolveLlmBaseUrl } from "./llm-config.ts";
 import { decodePersistedEnvValue, mergeEnvText } from "./env-text.ts";
+import { parseEnvText } from "../desktop/env-file.ts";
 export { mergeEnvText } from "./env-text.ts";
 import { isIsolatedDevProfile, runtimeProfile } from "./runtime-profile.ts";
 import {
@@ -302,6 +303,21 @@ export function seedKeystore(env: Record<string, string>): void {
     envSeeded.add(target);
   }
   seedLegacyModelCapabilities(env);
+}
+
+/** Load the active profile's persisted settings file before the server mounts routes. */
+export async function loadKeystoreFromDisk(): Promise<void> {
+  const text = await readFile(ENV_PATH, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
+  seedKeystore(parseEnvText(text));
+}
+
+/** Test seam for simulating a fresh server process without changing production behavior. */
+export function resetKeystoreForTests(): void {
+  store.clear();
+  envSeeded.clear();
 }
 
 /**
