@@ -51,6 +51,8 @@ import halftoneFrag from './halftone.frag?raw';
 import motionBlurFrag from './motion-blur.frag?raw';
 import type { FxDef, SerializableFxDef } from './uniforms';
 import type { FxPass } from '../runtime';
+import { CUSTOM_FX } from './custom-fx-registry';
+export { CUSTOM_FX } from './custom-fx-registry';
 
 // invert is modeled as a 0/1 slider.
 const INVERT = { key: 'invert', label: '反转', default: 0, min: 0, max: 1, step: 1 };
@@ -717,8 +719,6 @@ export const ALL_FX: Record<string, FxDef> = { ...FX_EFFECTS, ...LUT_EFFECTS };
 // Customized entries for easy differentiation/enumeration/testing. Built-in fx and LUTs remain unchanged.
 // ponytail: The essence of the registry is to share the runtime state. This is the only place where it must be "changed in place" (the only place where it can be changed
 // The way effect-tools that captures the reference sees the new fx); the rest still adheres to the immutable contract.
-export const CUSTOM_FX: Record<string, FxDef> = {};
-
 /** Generic lut.frag source code (the plugin LUT def is assembled with it + its own .cube URL). */
 export const LUT_FRAG = lutFrag;
 
