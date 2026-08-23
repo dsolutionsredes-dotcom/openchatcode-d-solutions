@@ -1,0 +1,15 @@
+export default {
+  '关闭': 'Cerrar', '取消': 'Cancelar', '确定': 'Aceptar', '删除': 'Eliminar', '复制': 'Copiar',
+  '展开': 'Expandir', '收起': 'Contraer', '保存': 'Guardar', '预览': 'Vista previa',
+  '配置模型': 'Configurar modelo', '配置模型后开始使用 Agent': 'Configura un modelo para empezar a usar el agente',
+  '工程': 'Proyectos', '新建工程': 'Nuevo proyecto', '搜索工程': 'Buscar proyectos',
+  '清除搜索': 'Borrar búsqueda', '重命名': 'Renombrar', '确认删除': 'Confirmar eliminación',
+  '打开 {name}': 'Abrir {name}', '双击重命名': 'Doble clic para renombrar',
+  '数据存储': 'Almacenamiento de datos', '外部 Agent 接入 (MCP)': 'Conexión de agente externo (MCP)',
+  '编辑快捷键': 'Editar atajos de teclado', '设计风格': 'Estilo de diseño', '我的风格': 'Mis estilos',
+  '预设': 'Preajustes', '无': 'Ninguno', '字体': 'Fuente', '中文': 'Chino', '西文': 'Occidental',
+  '配色': 'Colores', '强调': 'Acento', '应用到工程': 'Aplicar al proyecto', '清除': 'Borrar',
+  '选择模型': 'Elegir modelo', '支持': 'Compatible', '不支持': 'No compatible',
+  '读取中…': 'Cargando…', '操作失败：{err}': 'La operación falló: {err}',
+  '视觉理解': 'Comprensión visual', '视觉模型': 'Modelo visual', '账户': 'Cuenta',
+};
