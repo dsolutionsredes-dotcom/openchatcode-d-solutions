@@ -37,6 +37,26 @@ assert.equal(requestShapeAllowed(foreignOrigin), false, 'foreign origin blocked'
 const nonLoopback = req({ socket: { remoteAddress: '10.0.0.5' } });
 assert.equal(requestShapeAllowed(nonLoopback), false, 'non-loopback socket blocked');
 
+const previousVps = process.env.OPENCHATCUT_VPS;
+const previousOrigin = process.env.OPENCHATCUT_PUBLIC_ORIGIN;
+process.env.OPENCHATCUT_VPS = '1';
+process.env.OPENCHATCUT_PUBLIC_ORIGIN = 'https://openchatcode.d-solution.org';
+const vpsRequest = req({
+  url: '/api/keys/test',
+  socket: { remoteAddress: '10.0.0.5' },
+  headers: {
+    host: 'openchatcode.d-solution.org',
+    origin: 'https://openchatcode.d-solution.org',
+    'sec-fetch-site': 'same-origin',
+  },
+});
+assert.equal(requestShapeAllowed(vpsRequest), true, 'configured VPS editor may test settings');
+assert.equal(requestShapeAllowed({ ...vpsRequest, url: '/api/keys' }), true, 'configured VPS editor may save settings');
+assert.equal(requestShapeAllowed({ ...vpsRequest, headers: { ...vpsRequest.headers, origin: 'https://evil.example' } }), false, 'external origin blocked');
+assert.equal(requestShapeAllowed({ ...vpsRequest, headers: { ...vpsRequest.headers, 'sec-fetch-site': 'cross-site' } }), false, 'cross-site fetch blocked');
+if (previousVps === undefined) delete process.env.OPENCHATCUT_VPS; else process.env.OPENCHATCUT_VPS = previousVps;
+if (previousOrigin === undefined) delete process.env.OPENCHATCUT_PUBLIC_ORIGIN; else process.env.OPENCHATCUT_PUBLIC_ORIGIN = previousOrigin;
+
 const bearer = req({ url: '/api/external-mcp/mcp', headers: { authorization: 'Bearer abc' } });
 assert.equal(requestShapeAllowed(bearer), false, 'an arbitrary bearer token does not bypass the origin gate');
 
@@ -48,5 +68,13 @@ const externalMcp = req({
   headers: { authorization: `Bearer ${externalMcpToken()}` },
 });
 assert.equal(requestShapeAllowed(externalMcp), true, 'the exact MCP token reaches its own endpoint');
+
+const autoEditorWithoutBearer = { ...vpsRequest, url: '/api/auto-editor/message' };
+assert.equal(requestShapeAllowed(autoEditorWithoutBearer), false, 'AUTO_EDITOR remains outside the VPS settings exception');
+assert.equal(requestShapeAllowed({ ...autoEditorWithoutBearer, headers: { authorization: 'Bearer invalid' } }), false, 'AUTO_EDITOR rejects invalid bearer when not an allowed VPS settings route');
+assert.equal(requestShapeAllowed({ ...autoEditorWithoutBearer, headers: { authorization: `Bearer ${externalMcpToken()}` } }), true, 'AUTO_EDITOR accepts only the configured bearer at the shape gate');
+
+const handoffUpload = req({ url: '/upload?handoff=opaque-single-use-token', socket: { remoteAddress: '10.0.0.5' }, headers: {} });
+assert.equal(requestShapeAllowed(handoffUpload), true, 'handoff upload reaches its own token verifier');
 
 console.log('request-shape-gate.verify: ok');
