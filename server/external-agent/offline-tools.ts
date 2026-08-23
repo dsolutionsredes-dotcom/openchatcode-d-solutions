@@ -14,6 +14,7 @@ import { TIMELINE_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/timeline-to
 import { TRACK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/track-tools.js';
 import { TRANSCRIPT_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/transcript-tools.js';
 import { WATERMARK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/watermark-tools.js';
+import { UPLOAD_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/upload-tools.js';
 
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   begin_edit_session: 'Start an offline server draft. Manual mode creates a durable pending proposal; auto mode applies at review.',
@@ -21,6 +22,7 @@ const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   approve_edit_session: 'Approve and atomically commit the pending offline proposal.',
   reject_edit_session: 'Reject the pending offline proposal without changing the stored project.',
   edit_captions: 'Edit built-in caption template, style, layout, text, source, and language data. preset_* actions require the browser editor.',
+  finalize_uploaded_asset: 'Finalize a verified official upload receipt into the current project media pool.',
 };
 
 const OFFLINE_SCHEMA_GROUPS = [
@@ -34,6 +36,7 @@ const OFFLINE_SCHEMA_GROUPS = [
   MARKERS_TOOL_SCHEMAS,
   READ_PROJECT_TOOL_SCHEMAS,
   TRANSCRIPT_TOOL_SCHEMAS,
+  UPLOAD_TOOL_SCHEMAS,
 ] as const;
 
 function serverDirectSchemas(): ExternalRegisteredTool[] {
