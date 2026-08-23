@@ -45,6 +45,7 @@ const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
   edit_captions: true,
   update_watermark: true,
   manage_markers: true,
+  finalize_uploaded_asset: true,
 };
 
 const SERVER_DIRECT_BROWSER_ACTIONS: Record<string, true> = {
