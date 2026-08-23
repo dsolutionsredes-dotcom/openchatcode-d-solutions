@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import type { ModelMessage } from 'ai';
+import {
+  conversationFor,
+  conversationKeyFor,
+  normalizeExternalResponse,
+  recoverPendingProposalRuntime,
+  saveConversation,
+} from './auto-editor.ts';
+import { finalVisibleRunMessage } from './auto-editor.ts';
+import { offlineExternalToolSchemas } from '../external-agent/offline-tools.ts';
+import { isExternalServerDirectTool } from '../../src/agent/external-tool-policy.ts';
+import type { OfflineStoredProject } from '../external-agent/offline-project-store.ts';
+import { OfflineExternalEditRuntime } from '../external-agent/offline-runtime.ts';
+import { MemoryPersistence, editorUrl, projectDoc, projectId as fixtureProjectId } from '../external-agent/offline-runtime.verify-fixtures.ts';
+
+const projectId = `auto-editor-contract-${randomUUID()}`;
+const alpha: ModelMessage[] = [{ role: 'user', content: 'alpha' }];
+const beta: ModelMessage[] = [{ role: 'user', content: 'beta' }];
+await saveConversation(projectId, 'chat-alpha', alpha);
+await saveConversation(projectId, 'chat-beta', beta);
+assert.notEqual(conversationKeyFor(projectId, 'chat-alpha'), conversationKeyFor(projectId, 'chat-beta'));
+assert.deepEqual(await conversationFor(projectId, 'chat-alpha'), alpha);
+assert.deepEqual(await conversationFor(projectId, 'chat-beta'), beta);
+assert.deepEqual(await conversationFor(projectId, 'chat-missing'), []);
+
+const contractCases = [
+  { body: { projectId: 'p' }, value: { ok: true, renderId: 'r1' }, action: 'render', status: 'queued', field: 'renderId' },
+  { body: { projectId: 'p' }, value: { ok: true, state: 'awaiting_upload', assetId: 'a1' }, action: 'import', status: 'awaiting_upload', field: 'assetId' },
+  { body: { projectId: 'p' }, value: { ok: true, progress: 0.5 }, action: 'render_status', status: 'running', field: 'progress' },
+  { body: { projectId: 'p' }, value: { ok: true, status: 'applied' }, action: 'edit', status: 'applied', field: undefined },
+] as const;
+for (const test of contractCases) {
+  const normalized = normalizeExternalResponse(test.body, test.value, { action: test.action, status: test.status });
+  for (const key of ['ok', 'status', 'action', 'message', 'data', 'requiresUserInput', 'errorCode', 'projectId', 'engine']) {
+    assert.ok(key in normalized, `${test.action} contract has ${key}`);
+  }
+  if (test.field) assert.equal((normalized.data as Record<string, unknown>)[test.field], test.value[test.field]);
+}
+
+const pendingDoc = { projectId: 'p', doc: {} as OfflineStoredProject['doc'], revision: 'r' };
+const recoveredActions: string[] = [];
+const fakeRecovered = {
+  currentSessionInfo: () => null,
+  currentProposalDoc: () => pendingDoc.doc,
+  execute: async (name: string) => {
+    recoveredActions.push(name);
+    if (name === 'begin_edit_session') return { resumed: true, status: 'awaiting_review', editSessionId: 'edit-recovered' };
+    return { status: name.startsWith('approve') ? 'applied' : 'rejected' };
+  },
+};
+const recovered = await recoverPendingProposalRuntime(fakeRecovered);
+assert.equal(recovered.currentProposalDoc(), pendingDoc.doc, 'recovered proposal is available for preview');
+await recovered.execute('approve_edit_session', { editSessionId: 'edit-recovered' });
+await recovered.execute('reject_edit_session', { editSessionId: 'edit-recovered' });
+assert.deepEqual(recoveredActions, ['begin_edit_session', 'approve_edit_session', 'reject_edit_session']);
+
+const exposed = new Set(offlineExternalToolSchemas().map((schema) => schema.name));
+assert.equal(exposed.has('transcribe_track'), true, 'transcribe_track is in server-direct catalog');
+assert.equal(isExternalServerDirectTool('transcribe_track'), true, 'transcribe_track is server-direct');
+
+let invokedTool = '';
+const transcriptionRuntime = await OfflineExternalEditRuntime.create(fixtureProjectId, editorUrl, {
+  persistence: new MemoryPersistence(projectDoc()),
+  isBrowserConnected: () => false,
+  executeTool: async (name) => {
+    invokedTool = name;
+    return { ok: true, provider: 'openai' };
+  },
+});
+const transcriptionSession = await transcriptionRuntime.execute('begin_edit_session', {
+  clientName: 'auto-editor-test', approvalMode: 'manual',
+}) as Record<string, unknown>;
+await transcriptionRuntime.execute('transcribe_track', {
+  editSessionId: String(transcriptionSession.editSessionId), provider: 'openai', track: 'A1',
+});
+assert.equal(invokedTool, 'transcribe_track', 'external runtime invokes headless transcription');
+await transcriptionRuntime.dispose();
+
+assert.equal(finalVisibleRunMessage({ events: [
+  { type: 'text-start', data: {} },
+  { type: 'text-delta', data: { text: 'internal' } },
+  { type: 'text-start', data: {} },
+  { type: 'text-delta', data: { text: 'visible' } },
+] }), 'visible');
+
+console.log('auto-editor contract, conversation, recovery, and headless exposure verification passed');
