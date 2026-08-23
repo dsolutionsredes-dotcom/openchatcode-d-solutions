@@ -11,7 +11,8 @@ import {
   type TransitionType,
   type ZoomShape,
 } from '../../editor/types';
-import { CUSTOM_FX, FX_EFFECTS, FX_IDS, LUT_EFFECTS, LUT_IDS } from '../../gl/fx/effects';
+import { EFFECT_METADATA } from '../../gl/fx/effect-metadata';
+import { CUSTOM_FX } from '../../gl/fx/custom-fx-registry';
 import { listCustomTransitions } from '../../gl/customTransitions';
 import { listCustomZooms } from '../../editor/customZooms';
 import type { Tpl } from '../../types';
@@ -95,9 +96,9 @@ export function buildLibraryItems(templates: Tpl[]): LibraryItem[] {
     });
   }
 
-  for (const id of LUT_IDS) {
-    const d = LUT_EFFECTS[id];
-    if (!d) continue;
+  const lutIds = Object.keys(EFFECT_METADATA).filter((id) => !id.startsWith('builtin:fx-'));
+  for (const id of lutIds) {
+    const d = EFFECT_METADATA[id];
     items.push({
       id: d.id,
       name: d.name,
@@ -117,9 +118,9 @@ export function buildLibraryItems(templates: Tpl[]): LibraryItem[] {
     });
   }
 
-  for (const id of FX_IDS) {
-    const d = FX_EFFECTS[id];
-    if (!d) continue;
+  const fxIds = Object.keys(EFFECT_METADATA).filter((id) => id.startsWith('builtin:fx-'));
+  for (const id of fxIds) {
+    const d = EFFECT_METADATA[id];
     items.push({
       id: d.id,
       name: d.name,
