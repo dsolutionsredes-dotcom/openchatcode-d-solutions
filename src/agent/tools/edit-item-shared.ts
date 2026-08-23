@@ -4,7 +4,8 @@ import type {
   ZoomEffect,
   ZoomShape,
 } from '../../editor/types';
-import { ALL_FX } from '../../gl/fx/effects';
+import { EFFECT_METADATA } from '../../gl/fx/effect-metadata';
+import { CUSTOM_FX } from '../../gl/fx/custom-fx-registry';
 import { parseZoomLibraryId } from './library-catalog';
 
 export type Args = Record<string, unknown>;
@@ -71,11 +72,11 @@ export function shapeFrom(raw: unknown): ZoomShape | undefined {
 
 export function describeClip(item: TimelineItem): OpResult {
   const effects = (item.effects ?? [])
-    .filter((effect) => effect.assetId in ALL_FX)
+    .filter((effect) => effect.assetId in EFFECT_METADATA || effect.assetId in CUSTOM_FX)
     .map((effect) => ({
       effectId: effect.id,
       assetId: effect.assetId,
-      name: ALL_FX[effect.assetId]?.name,
+      name: EFFECT_METADATA[effect.assetId]?.name ?? CUSTOM_FX[effect.assetId]?.name,
       overrides: effect.overrides ?? {},
     }));
   return {
