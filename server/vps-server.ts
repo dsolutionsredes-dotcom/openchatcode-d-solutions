@@ -1,12 +1,10 @@
-import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import type { ViteDevServer } from 'vite';
 import { serverPlugins } from './plugins/index.ts';
-import { getKey, seedKeystore } from './keystore.ts';
+import { getKey, loadKeystoreFromDisk } from './keystore.ts';
 import { proxyMiddleware } from './proxy.ts';
-import { parseEnvText } from '../desktop/env-file.ts';
 import { createMiniConnect } from '../desktop/mini-connect.ts';
 import { distStaticMiddleware, uploadsMiddleware } from '../desktop/static-files.ts';
 
@@ -22,11 +20,6 @@ export interface VpsServer {
   readonly origin: string;
 }
 
-async function seedFromEnvLocal(): Promise<void> {
-  const text = await readFile(resolve(process.cwd(), '.env.local'), 'utf8').catch(() => '');
-  seedKeystore(parseEnvText(text));
-}
-
 function assemblyHeaders(): Record<string, string> {
   const key = getKey('ASSEMBLYAI_API_KEY');
   return key ? { authorization: key } : {};
@@ -35,7 +28,7 @@ function assemblyHeaders(): Record<string, string> {
 export async function startVpsServer(
   distDir = resolve(process.cwd(), 'dist'),
 ): Promise<VpsServer> {
-  await seedFromEnvLocal();
+  await loadKeystoreFromDisk();
 
   const app = createMiniConnect((err) => {
     console.error('[vps-server]', err instanceof Error ? err.message : err);
