@@ -61,7 +61,10 @@ export async function startVpsServer(
     },
   } as unknown as ViteDevServer;
 
-  for (const plugin of serverPlugins({ projectStoreHttp: false })) {
+  // VPS serves the same browser-facing Project Store transport as the Vite
+  // host. Authorization remains enforced by the central VPS editor trust
+  // model in project-store-plugin.ts.
+  for (const plugin of serverPlugins({ projectStoreHttp: true })) {
     const hook = plugin.configureServer;
     const fn = typeof hook === 'function' ? hook : hook?.handler;
     await fn?.call(plugin as never, fake);

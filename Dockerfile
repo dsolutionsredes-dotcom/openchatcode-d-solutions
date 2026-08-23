@@ -3,6 +3,7 @@ FROM node:24-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/data \
     OPENCHATCUT_VPS=1 \
+    OPENCHATCUT_DATA_DIR=/data \
     OPENCHATCUT_KEYSTORE_PATH=/data/.openchatcut/settings.env \
     MEDIA_DIR=/data/media \
     CC_BROWSER_EXECUTABLE=/usr/bin/chromium \
