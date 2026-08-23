@@ -81,8 +81,6 @@ function configuredVpsOrigin(): string | null {
  * This is CSRF protection, not user authentication; deployments needing per-user access
  * must put the VPS behind their own authentication layer. */
 export function vpsWebHttpAuthorized(req: IncomingMessage): boolean {
-  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-  if (path !== '/api/keys' && !path.startsWith('/api/keys/')) return false;
   const expected = configuredVpsOrigin();
   const origin = header(req, 'origin');
   const site = header(req, 'sec-fetch-site');
