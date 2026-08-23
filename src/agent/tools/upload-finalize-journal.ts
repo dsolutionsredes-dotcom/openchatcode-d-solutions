@@ -43,7 +43,11 @@ export async function withReceiptCommitLock<T>(
 }
 
 export async function postReceiptAction(body: Record<string, unknown>): Promise<Response> {
-  return fetch('/api/external-agent/upload-receipt', {
+  const origin = typeof location !== 'undefined' && location.origin
+    ? location.origin
+    : process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim()
+      || `http://127.0.0.1:${process.env.PORT || '5199'}`;
+  return fetch(`${origin}/api/external-agent/upload-receipt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
