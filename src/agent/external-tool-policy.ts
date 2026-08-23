@@ -15,7 +15,7 @@ const DRAFT_EDIT_TOOL_NAMES = new Set([
   'add_motion_graphic', 'update_item_props', 'move_item', 'set_item_timing',
   'duplicate_item', 'remove_item', 'split_item', 'add_audio', 'clear_timeline',
   'set_aspect_ratio', 'manage_timelines', 'edit_track', 'apply_script',
-  'edit_item', 'manage_effects', 'edit_captions', 'update_watermark',
+  'edit_item', 'manage_effects', 'edit_captions', 'update_watermark', 'transcribe_track',
   'manage_markers', 'apply_caption_avoidance', 'place_graphics_in_safe_zone', 'auto_reframe',
   'manage_design_style',
 ]);
@@ -33,6 +33,7 @@ const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
 
 const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
   edit_item: true,
+  transcribe_track: true,
   update_item_props: true,
   move_item: true,
   set_item_timing: true,
