@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import { projectStoreHttpAuthorized } from '../project-store-http-auth.ts';
+import { projectStoreHttpAuthorized, vpsWebHttpAuthorized } from '../project-store-http-auth.ts';
 import { externalMcpAuthorized } from '../editor-auth.ts';
 
 /**
@@ -20,7 +20,7 @@ export function requestShapeAllowed(req: IncomingMessage): boolean {
   // external MCP clients upload without an Origin header, so the token is
   // their only credential and must pass the shape gate to reach that check.
   if (isHandoffUpload(req)) return true;
-  return projectStoreHttpAuthorized(req);
+  return projectStoreHttpAuthorized(req) || vpsWebHttpAuthorized(req);
 }
 
 function isHandoffUpload(req: IncomingMessage): boolean {
