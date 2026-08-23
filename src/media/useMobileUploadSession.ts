@@ -23,7 +23,8 @@ function useCreatedSession(setError: SetError): [MobileUploadSession | null, Set
   useEffect(() => {
     let active = true;
     let createdId: string | null = null;
-    void createMobileUploadSession(getLocale()).then((created) => {
+    const uploadLocale = getLocale() === 'zh' ? 'zh' : 'en';
+    void createMobileUploadSession(uploadLocale).then((created) => {
       createdId = created.id;
       if (!active) { void closeMobileUploadSession(created.id).catch(() => undefined); return; }
       setSession(created);
