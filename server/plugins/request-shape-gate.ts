@@ -13,8 +13,8 @@ export function requestShapeAllowed(req: IncomingMessage): boolean {
   const method = (req.method ?? 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if ((url.pathname === '/api/external-mcp/mcp' || url.pathname.startsWith('/api/auto-editor'))
-    && externalMcpAuthorized(req)) return true;
+  const protectedExternal = url.pathname === '/api/external-mcp/mcp' || url.pathname.startsWith('/api/auto-editor');
+  if (protectedExternal) return externalMcpAuthorized(req);
   // Upload slots carry a single-use, short-lived handoff token that the
   // /upload endpoint verifies itself (scope-bound filename/size/content-type);
   // external MCP clients upload without an Origin header, so the token is
