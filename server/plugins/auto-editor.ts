@@ -20,6 +20,7 @@ import {
 } from '../agent-runs/executor.ts';
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
 import { mintImportUpload } from '../external-agent/import-token.ts';
+import { createExternalProject, listExternalProjects } from '../external-agent/projects.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -113,6 +114,61 @@ function projectIdOf(value: unknown): string {
   const projectId = typeof value === 'string' ? value.trim() : '';
   if (!/^[A-Za-z0-9_-]{1,160}$/.test(projectId)) throw new Error('valid projectId is required');
   return projectId;
+}
+
+type ProjectEnsureDependencies = {
+  list: typeof listExternalProjects;
+  create: typeof createExternalProject;
+};
+
+function externalProjectNameOf(body: Record<string, unknown>): string {
+  const value = body.externalProjectName ?? body.name;
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (name.length > 160) throw new Error('externalProjectName/name must be 160 characters or fewer');
+  return name;
+}
+
+export async function ensureExternalProjectWith(
+  body: Record<string, unknown>,
+  dependencies: ProjectEnsureDependencies = { list: listExternalProjects, create: createExternalProject },
+): Promise<Record<string, unknown>> {
+  const requestedProjectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (requestedProjectId) {
+    const projectId = projectIdOf(requestedProjectId);
+    const projects = await dependencies.list(false);
+    const exact = projects.find((project) => project.id === projectId);
+    if (exact) return { ok: true, projectId: exact.id, reused: true, created: false, project: exact };
+    const matches = projects.filter((project) => project.id.startsWith(projectId));
+    if (matches.length === 1) return { ok: true, projectId: matches[0].id, reused: true, created: false, project: matches[0] };
+    if (matches.length > 1) throw new Error('projectId prefix is ambiguous; send the full OpenChatCut projectId');
+    throw new Error(`OpenChatCut projectId ${projectId} was not found`);
+  }
+
+  if (body.externalProjectId != null) {
+    throw new Error('externalProjectId cannot be associated by the official project API; provide externalProjectName/name to bootstrap, then persist and send the returned OpenChatCut projectId');
+  }
+  const name = externalProjectNameOf(body);
+  if (!name) throw new Error('projectId or externalProjectName/name is required; persist the returned projectId for subsequent requests');
+  const projects = await dependencies.list(false);
+  const matches = projects.filter((project) => project.name === name);
+  if (matches.length > 1) throw new Error(`multiple OpenChatCut projects have the name ${name}; send the returned projectId`);
+  if (matches.length === 1) {
+    const project = matches[0];
+    return { ok: true, projectId: project.id, reused: true, created: false, project, externalProjectName: name };
+  }
+  const project = await dependencies.create({
+    name,
+    ...(typeof body.description === 'string' ? { description: body.description } : {}),
+    ...(typeof body.fps === 'number' ? { fps: body.fps } : {}),
+    ...(typeof body.compositionWidth === 'number' ? { compositionWidth: body.compositionWidth } : {}),
+    ...(typeof body.compositionHeight === 'number' ? { compositionHeight: body.compositionHeight } : {}),
+  });
+  return { ok: true, projectId: project.id, reused: false, created: true, project, externalProjectName: name };
+}
+
+export function externalMessageOf(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('message is required');
+  return value;
 }
 
 export function conversationIdOf(body: Record<string, unknown>): string {
@@ -214,8 +270,7 @@ function autoStatus(runtimeInfo: Record<string, unknown> | null, runStatus: stri
 async function createMessageRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const conversationId = conversationIdOf(body);
-  const message = typeof body.message === 'string' ? body.message.trim() : '';
-  if (!message) throw new Error('message is required');
+  const message = externalMessageOf(body.message);
   const runtime = await runtimeFor(projectId);
   const snapshot = await loadOfflineStoredProject(projectId);
   if (!snapshot) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
@@ -427,6 +482,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return requestBody;
   };
   try {
+    if (req.method === 'POST' && url.pathname === '/project/ensure') {
+      const body = await readExternalBody();
+      const value = await ensureExternalProjectWith(body);
+      return sendExternal(res, 200, body, value, {
+        action: 'project_ensure',
+        status: value.created === true ? 'created' : 'reused',
+      });
+    }
     if (req.method === 'POST' && url.pathname === '/import/session') return sendExternal(res, 201, requestBody = await readExternalBody(), await createOfficialImportSession(requestBody), { action: 'import', status: 'awaiting_upload' });
     if (req.method === 'POST' && url.pathname === '/import/finalize') return sendExternal(res, 200, requestBody = await readExternalBody(), await finalizeOfficialImport(requestBody), { action: 'import_finalize', status: 'applied' });
     if (req.method === 'POST' && url.pathname === '/render') return sendExternal(res, 200, requestBody = await readExternalBody(), await officialRender(requestBody, false), { action: 'render', status: 'queued' });
