@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { DATA_DIR_ENV, DEV_PROFILE_ID_ENV, defaultRootDir, resolveRuntimeProfile } from './runtime-profile.ts';
+import { DATA_DIR_ENV, DEV_PROFILE_ID_ENV, KEYSTORE_PATH_ENV, defaultRootDir, resolveRuntimeProfile } from './runtime-profile.ts';
 import { dataDirPointerPath } from './data-dir.ts';
 import { projectStoreAuthDir } from './project-store-http-auth.ts';
 
@@ -43,6 +43,9 @@ assert.equal(resolveRuntimeProfile({ OPENCHATCUT_GENERATION_JOB_STORE: '' }, {
   homeDir,
   cwd,
 }).generationJobStore, '');
+const explicitKeystore = resolve('runtime-profile-fixtures', 'persistent', 'settings.env');
+assert.equal(resolveRuntimeProfile({ [KEYSTORE_PATH_ENV]: explicitKeystore }, { homeDir, cwd }).keystorePath, explicitKeystore);
+assert.throws(() => resolveRuntimeProfile({ [KEYSTORE_PATH_ENV]: 'relative/settings.env' }, { homeDir, cwd }), /must be an absolute path/);
 
 const profileAId = '11111111-1111-4111-8111-111111111111';
 const profileBId = '22222222-2222-4222-8222-222222222222';
