@@ -22,8 +22,70 @@ import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs
 import { mintImportUpload } from '../external-agent/import-token.ts';
 
 const CONVERSATION_LIMIT = 32;
-const CONVERSATION_KEY = (projectId: string) => `auto-editor-conversation:${projectId}`;
+export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
+  return `auto-editor-conversation:${projectId}:${conversationId}`;
+}
 const runtimeByProject = new Map<string, OfflineExternalEditRuntime>();
+
+type ExternalResponseDefaults = {
+  action: string;
+  status: string;
+  message?: string;
+  requiresUserInput?: boolean;
+  engine?: string;
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export function normalizeExternalResponse(
+  body: Record<string, unknown>,
+  value: unknown,
+  defaults: ExternalResponseDefaults,
+): Record<string, unknown> {
+  const source = record(value);
+  const sourceData = record(source.data);
+  const data: Record<string, unknown> = { ...sourceData };
+  const contractKeys = new Set([
+    'ok', 'status', 'action', 'message', 'data', 'requiresUserInput',
+    'errorCode', 'projectId', 'runId', 'engine',
+  ]);
+  for (const [key, entry] of Object.entries(source)) {
+    if (!contractKeys.has(key)) data[key] = entry;
+  }
+  if (typeof source.conversationId === 'string') data.conversationId = source.conversationId;
+  const projectId = typeof source.projectId === 'string'
+    ? source.projectId
+    : typeof body.projectId === 'string' ? body.projectId : '';
+  const runId = typeof source.runId === 'string'
+    ? source.runId
+    : typeof body.runId === 'string' ? body.runId : undefined;
+  return {
+    ok: source.ok !== false,
+    status: typeof source.status === 'string' ? source.status : defaults.status,
+    action: typeof source.action === 'string' ? source.action : defaults.action,
+    message: typeof source.message === 'string' ? source.message : (defaults.message ?? ''),
+    data,
+    requiresUserInput: source.requiresUserInput === true || defaults.requiresUserInput === true,
+    errorCode: typeof source.errorCode === 'string' ? source.errorCode : '',
+    projectId,
+    ...(runId ? { runId } : {}),
+    engine: typeof source.engine === 'string' ? source.engine : (defaults.engine ?? 'openchatcut'),
+  };
+}
+
+function sendExternal(
+  res: ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+  value: unknown,
+  defaults: ExternalResponseDefaults,
+): void {
+  send(res, status, normalizeExternalResponse(body, value, defaults));
+}
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   if (res.writableEnded || res.destroyed) return;
@@ -53,6 +115,16 @@ function projectIdOf(value: unknown): string {
   return projectId;
 }
 
+export function conversationIdOf(body: Record<string, unknown>): string {
+  const raw = body.conversationId ?? body.chatId ?? 'default';
+  const conversationId = typeof raw === 'string' ? raw.trim() : '';
+  if (!conversationId) return 'default';
+  if (!/^[A-Za-z0-9_-]{1,160}$/.test(conversationId)) {
+    throw new Error('conversationId/chatId must contain only letters, numbers, _ or -');
+  }
+  return conversationId;
+}
+
 function publicOrigin(): string {
   return process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim() || `http://127.0.0.1:${process.env.PORT || '5199'}`;
 }
@@ -70,8 +142,8 @@ async function runtimeFor(projectId: string): Promise<OfflineExternalEditRuntime
   return runtime;
 }
 
-async function conversationFor(projectId: string): Promise<ModelMessage[]> {
-  const value = await kvGet<unknown>(CONVERSATION_KEY(projectId));
+export async function conversationFor(projectId: string, conversationId = 'default'): Promise<ModelMessage[]> {
+  const value = await kvGet<unknown>(conversationKeyFor(projectId, conversationId));
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is ModelMessage => (
     Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry)
@@ -80,8 +152,8 @@ async function conversationFor(projectId: string): Promise<ModelMessage[]> {
   )).slice(-CONVERSATION_LIMIT);
 }
 
-async function saveConversation(projectId: string, messages: ModelMessage[]): Promise<void> {
-  await kvSet(CONVERSATION_KEY(projectId), messages.slice(-CONVERSATION_LIMIT));
+export async function saveConversation(projectId: string, conversationId: string, messages: ModelMessage[]): Promise<void> {
+  await kvSet(conversationKeyFor(projectId, conversationId), messages.slice(-CONVERSATION_LIMIT));
 }
 
 function promptContext(snapshot: OfflineStoredProject): AgentContext {
@@ -141,12 +213,13 @@ function autoStatus(runtimeInfo: Record<string, unknown> | null, runStatus: stri
 
 async function createMessageRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
+  const conversationId = conversationIdOf(body);
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   if (!message) throw new Error('message is required');
   const runtime = await runtimeFor(projectId);
   const snapshot = await loadOfflineStoredProject(projectId);
   if (!snapshot) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
-  const history = await conversationFor(projectId);
+  const history = await conversationFor(projectId, conversationId);
   const messages: ModelMessage[] = [...history, { role: 'user', content: message }];
   const providerValue = typeof body.provider === 'string' ? body.provider : getKey('LLM_PROVIDER' as KeyName);
   const provider = normalizeLlmProvider(providerValue);
@@ -165,7 +238,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
     askOnly,
     sessionGeneration: await import('../../src/persist/agentSessionGeneration.ts').then((module) => module.currentAgentSessionGeneration(projectId)),
     references: [],
-    externalSessionId: `auto-editor:${projectId}`,
+    externalSessionId: `auto-editor:${projectId}:${conversationId}`,
   });
   const schemas = offlineExternalToolSchemas();
   const execution: ServerRunInput = {
@@ -184,7 +257,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   const text = runMessage(run);
   const session = runtime.currentSessionInfo();
   const status = autoStatus(session, run.status);
-  if (text) await saveConversation(projectId, [...messages, { role: 'assistant', content: text }]);
+  if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
   return {
     ok: true,
     status,
@@ -194,21 +267,56 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
       requiresApproval: status === 'pending_approval',
       approvalStatus: status === 'pending_approval' ? 'pending' : status,
       ...(session ?? {}),
+      conversationId,
     },
     requiresUserInput: requiresUserInputFor(status),
     errorCode: run.error ?? '',
     projectId,
     runId: run.id,
     capability,
+    conversationId,
     engine: 'openchatcut',
   };
+}
+
+export interface PendingProposalRuntime {
+  currentSessionInfo(): Record<string, unknown> | null;
+  currentProposalDoc(): OfflineStoredProject['doc'] | null;
+  execute(name: string, args: Record<string, unknown>): Promise<unknown>;
+}
+
+export async function recoverPendingProposalRuntime<T extends PendingProposalRuntime>(runtime: T): Promise<T> {
+  const current = runtime.currentSessionInfo();
+  if (current?.status === 'awaiting_review') return runtime;
+  const started = record(await runtime.execute('begin_edit_session', {
+    clientName: 'auto-editor-recovery',
+    approvalMode: 'manual',
+  }));
+  if (started.resumed === true && started.status === 'awaiting_review') return runtime;
+  const editSessionId = typeof started.editSessionId === 'string' ? started.editSessionId : '';
+  if (editSessionId) await runtime.execute('discard_edit_session', { editSessionId }).catch(() => undefined);
+  throw new Error('no pending proposal is available for recovery');
+}
+
+async function pendingRuntimeFor(projectId: string): Promise<OfflineExternalEditRuntime> {
+  const runtime = await runtimeFor(projectId);
+  try {
+    return await recoverPendingProposalRuntime(runtime);
+  } catch (error) {
+    const current = runtime.currentSessionInfo();
+    const editSessionId = typeof current?.editSessionId === 'string' ? current.editSessionId : '';
+    if (editSessionId) await runtime.execute('discard_edit_session', { editSessionId }).catch(() => undefined);
+    runtimeByProject.delete(projectId);
+    await runtime.dispose();
+    throw error;
+  }
 }
 
 async function officialRender(body: Record<string, unknown>, preview: boolean): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   let project: OfflineStoredProject['doc'] | null;
   if (preview) {
-    project = runtimeByProject.get(projectId)?.currentProposalDoc() ?? null;
+    project = (await pendingRuntimeFor(projectId)).currentProposalDoc();
     if (!project) throw new Error('no pending proposal is available for preview');
   } else {
     project = (await loadOfflineStoredProject(projectId))?.doc ?? null;
@@ -307,41 +415,52 @@ async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Re
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!externalMcpAuthorized(req)) return send(res, 401, { ok: false, error: 'invalid OpenChatCut MCP token' });
+  if (!externalMcpAuthorized(req)) {
+    return sendExternal(res, 401, {}, { ok: false, errorCode: 'unauthorized', message: 'invalid OpenChatCut MCP token' }, {
+      action: 'read', status: 'failed', engine: 'openchatcut',
+    });
+  }
   const url = new URL(req.url ?? '/', 'http://localhost');
+  let requestBody: Record<string, unknown> = {};
+  const readExternalBody = async (): Promise<Record<string, unknown>> => {
+    requestBody = await readJson(req);
+    return requestBody;
+  };
   try {
-    if (req.method === 'POST' && url.pathname === '/import/session') return send(res, 201, await createOfficialImportSession(await readJson(req)));
-    if (req.method === 'POST' && url.pathname === '/import/finalize') return send(res, 200, await finalizeOfficialImport(await readJson(req)));
-    if (req.method === 'POST' && url.pathname === '/render') return send(res, 200, await officialRender(await readJson(req), false));
-    if (req.method === 'POST' && url.pathname === '/preview') return send(res, 200, await officialRender(await readJson(req), true));
+    if (req.method === 'POST' && url.pathname === '/import/session') return sendExternal(res, 201, requestBody = await readExternalBody(), await createOfficialImportSession(requestBody), { action: 'import', status: 'awaiting_upload' });
+    if (req.method === 'POST' && url.pathname === '/import/finalize') return sendExternal(res, 200, requestBody = await readExternalBody(), await finalizeOfficialImport(requestBody), { action: 'import_finalize', status: 'applied' });
+    if (req.method === 'POST' && url.pathname === '/render') return sendExternal(res, 200, requestBody = await readExternalBody(), await officialRender(requestBody, false), { action: 'render', status: 'queued' });
+    if (req.method === 'POST' && url.pathname === '/preview') return sendExternal(res, 200, requestBody = await readExternalBody(), await officialRender(requestBody, true), { action: 'preview', status: 'queued' });
     if ((req.method === 'GET' || req.method === 'DELETE') && (url.pathname.startsWith('/render/') || url.pathname.startsWith('/preview/'))) {
       const renderId = url.pathname.split('/').filter(Boolean)[1] ?? '';
       if (!renderId) throw new Error('render id is required');
-      return send(res, 200, await officialRenderStatus(renderId, req.method));
+      const value = await officialRenderStatus(renderId, req.method);
+      return sendExternal(res, 200, { projectId: url.searchParams.get('projectId') ?? '' }, value, { action: url.pathname.startsWith('/preview/') ? 'preview_status' : 'render_status', status: 'read' });
     }
-    if (req.method === 'POST' && url.pathname === '/message') return send(res, 200, await createMessageRun(await readJson(req)));
+    if (req.method === 'POST' && url.pathname === '/message') return sendExternal(res, 200, requestBody = await readExternalBody(), await createMessageRun(requestBody), { action: 'read', status: 'read' });
     const parts = url.pathname.split('/').filter(Boolean);
     if (req.method === 'GET' && parts[0] === 'runs' && parts[1]) {
       const projectId = projectIdOf(url.searchParams.get('projectId'));
       const run = getRun(parts[1]) ?? await recoverServerRun(projectId, parts[1]);
       if (!run || run.projectId !== projectId) return send(res, 404, { ok: false, error: 'run not found' });
-      return send(res, 200, { ok: true, status: autoStatus(runtimeByProject.get(projectId)?.currentSessionInfo() ?? null, run.status), message: runMessage(run), projectId, runId: run.id, errorCode: run.error ?? '', engine: 'openchatcut' });
+      return sendExternal(res, 200, { projectId }, { ok: true, status: autoStatus(runtimeByProject.get(projectId)?.currentSessionInfo() ?? null, run.status), message: runMessage(run), projectId, runId: run.id, errorCode: run.error ?? '', engine: 'openchatcut' }, { action: 'status', status: 'read' });
     }
     if (req.method === 'POST' && (url.pathname === '/proposal/approve' || url.pathname === '/proposal/reject')) {
       const body = await readJson(req);
       const projectId = projectIdOf(body.projectId);
       const sessionId = typeof body.editSessionId === 'string' ? body.editSessionId : '';
-      const runtime = runtimeByProject.get(projectId) ?? await runtimeFor(projectId);
+      const runtime = await pendingRuntimeFor(projectId);
       const result = await runtime.execute(url.pathname.endsWith('/approve') ? 'approve_edit_session' : 'reject_edit_session', { editSessionId: sessionId });
       const status = url.pathname.endsWith('/approve') ? 'applied' : 'rejected';
       runtimeByProject.delete(projectId);
       await runtime.dispose();
       const metadata = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
-      return send(res, 200, { ok: true, status, action: 'edit', message: '', data: { requiresApproval: false, approvalStatus: status, ...metadata }, requiresUserInput: false, errorCode: '', projectId, engine: 'openchatcut' });
+      return sendExternal(res, 200, { projectId }, { ok: true, status, action: 'edit', message: '', data: { requiresApproval: false, approvalStatus: status, ...metadata }, requiresUserInput: false, errorCode: '', projectId, engine: 'openchatcut' }, { action: 'edit', status });
     }
-    return send(res, 404, { ok: false, error: 'not found' });
+    return sendExternal(res, 404, requestBody, { ok: false, errorCode: 'not_found', message: 'not found' }, { action: 'read', status: 'failed' });
   } catch (error) {
-    return send(res, 400, { ok: false, status: 'failed', errorCode: error instanceof Error ? error.message : String(error), engine: 'openchatcut' });
+    const errorCode = error instanceof Error ? error.message : String(error);
+    return sendExternal(res, 400, requestBody, { ok: false, status: 'failed', errorCode, message: errorCode, engine: 'openchatcut' }, { action: 'error', status: 'failed' });
   }
 }
 
