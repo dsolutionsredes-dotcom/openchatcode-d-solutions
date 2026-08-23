@@ -23,7 +23,7 @@ export function assertOfflineToolAllowed(
     );
   }
   const policy = policyForTool(name);
-  if (policy.effect !== 'read' && policy.effect !== 'reversible_edit') {
+  if (policy.effect !== 'read' && policy.effect !== 'reversible_edit' && name !== 'finalize_uploaded_asset') {
     throw new ExternalEditorCallError(
       'rejected',
       `Tool ${name} is not permitted by the offline execution policy.`,
