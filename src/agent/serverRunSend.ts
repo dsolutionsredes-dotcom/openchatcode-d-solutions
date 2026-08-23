@@ -21,6 +21,7 @@ import {
   requestServerRunStart,
   type CreatedServerRunResponse,
   type ServerRunOptions,
+  type ServerRunTerminal,
   type ServerRunPayload,
   type ServerRunRecovery,
 } from './serverRunProtocol';
@@ -241,6 +242,13 @@ function isDefiniteAdmissionRejection(status: number): boolean {
   return status >= 400 && status < 500 && ![408, 425, 429].includes(status);
 }
 
+export function shouldFinishSettledServerRun(status: ServerRunTerminal['status']): boolean {
+  return status === 'cancelled'
+    || status === 'failed'
+    || status === 'completed'
+    || status === 'awaiting_user';
+}
+
 async function submitServerRun(active: ActiveServerRun): Promise<void> {
   active.admission = 'uncertain';
   const response = await fetch('/api/agent-runs/', {
@@ -347,8 +355,15 @@ async function settleAcceptedFailure(
       payload.capability,
     );
     if (!ownsRun) return;
-    if (status === 'cancelled') await environment.finishRun(payload.runId, status);
-    else environment.subscribe(payload.runId);
+    // The provider failure may have already settled the server executor before
+    // the cancellation request arrives. Finish every terminal response here;
+    // subscribing to an already-terminal run can leave the durable browser
+    // record around when the SSE reconnect races the cleanup.
+    if (shouldFinishSettledServerRun(status)) {
+      await environment.finishRun(payload.runId, status);
+    } else {
+      environment.subscribe(payload.runId);
+    }
   } catch (cancelError) {
     if (!ownsRun) return;
     if (isPermanentServerRunRecoveryError(cancelError)) {

@@ -356,6 +356,17 @@ async function purgeProjectLocked(id: string): Promise<void> {
   await writeStoredEntry('projects', projects);
 }
 
+/** Permanently remove one project and its project-scoped store entries. */
+export async function purgeProjectPermanently(id: string): Promise<void> {
+  if (!VALID_PROJECT_ID.test(id)) throw new Error('invalid project id');
+  await serializeProjectStore(async () => {
+    await ensureStoreReady();
+    await purgeProjectLocked(id);
+    removeStoreKey(`chat:${id}`);
+    removeStoreKey(`project:${id}`);
+  });
+}
+
 export async function deleteStoredEntry(key: string): Promise<void> {
   if (!isProjectStoreKey(key)) throw new Error('invalid project store entry key');
   if (key.startsWith(PROJECT_EDIT_OWNERSHIP_PREFIX)

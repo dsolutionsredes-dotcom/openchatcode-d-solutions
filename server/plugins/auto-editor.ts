@@ -20,7 +20,7 @@ import {
 } from '../agent-runs/executor.ts';
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
 import { mintImportUpload } from '../external-agent/import-token.ts';
-import { createExternalProject, listExternalProjects } from '../external-agent/projects.ts';
+import { createExternalProject, deleteExternalProject, listExternalProjects } from '../external-agent/projects.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -489,6 +489,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         action: 'project_ensure',
         status: value.created === true ? 'created' : 'reused',
       });
+    }
+    if (req.method === 'DELETE' && url.pathname.startsWith('/project/')) {
+      const projectId = projectIdOf(url.pathname.slice('/project/'.length));
+      const runtime = runtimeByProject.get(projectId);
+      if (runtime) {
+        runtimeByProject.delete(projectId);
+        await runtime.dispose();
+      }
+      const deleted = await deleteExternalProject(projectId);
+      return sendExternal(res, deleted ? 200 : 404, { projectId }, {
+        ok: deleted,
+        status: deleted ? 'deleted' : 'not_found',
+        action: 'project_delete',
+        message: deleted ? 'project deleted' : 'project not found',
+        data: { deleted },
+        requiresUserInput: false,
+        errorCode: deleted ? '' : 'project_not_found',
+        projectId,
+        engine: 'openchatcut',
+      }, { action: 'project_delete', status: deleted ? 'deleted' : 'failed' });
     }
     if (req.method === 'POST' && url.pathname === '/import/session') return sendExternal(res, 201, requestBody = await readExternalBody(), await createOfficialImportSession(requestBody), { action: 'import', status: 'awaiting_upload' });
     if (req.method === 'POST' && url.pathname === '/import/finalize') return sendExternal(res, 200, requestBody = await readExternalBody(), await finalizeOfficialImport(requestBody), { action: 'import_finalize', status: 'applied' });

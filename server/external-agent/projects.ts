@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readStore, setStoredEntry } from '../plugins/project-store.ts';
+import { purgeProjectPermanently, readStore, setStoredEntry } from '../plugins/project-store.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
 
 interface ProjectMeta {
@@ -55,6 +55,14 @@ export async function listExternalProjects(includeDeleted = false): Promise<Proj
   return projectMetas(store.entries.projects)
     .filter((project) => includeDeleted || !project.deletedAt)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Permanently remove the OpenChatCut project through the official store purge. */
+export async function deleteExternalProject(projectId: string): Promise<boolean> {
+  const exists = (await listExternalProjects(true)).some((project) => project.id === projectId);
+  if (!exists) return false;
+  await purgeProjectPermanently(projectId);
+  return true;
 }
 
 export async function createExternalProject(
