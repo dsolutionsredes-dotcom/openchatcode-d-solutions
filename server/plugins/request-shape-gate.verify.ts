@@ -52,20 +52,25 @@ const vpsRequest = req({
 });
 assert.equal(requestShapeAllowed(vpsRequest), true, 'configured VPS editor may test settings');
 assert.equal(requestShapeAllowed({ ...vpsRequest, url: '/api/keys' }), true, 'configured VPS editor may save settings');
+for (const path of [
+  '/api/agent-runs', '/llm', '/api/model-packs', '/api/asr', '/render', '/export/job',
+  '/api/settings', '/api/project-store', '/generate',
+]) {
+  assert.equal(requestShapeAllowed({ ...vpsRequest, url: path }), true, `configured VPS editor may use ${path}`);
+}
 assert.equal(requestShapeAllowed({ ...vpsRequest, headers: { ...vpsRequest.headers, origin: 'https://evil.example' } }), false, 'external origin blocked');
 assert.equal(requestShapeAllowed({ ...vpsRequest, headers: { ...vpsRequest.headers, 'sec-fetch-site': 'cross-site' } }), false, 'cross-site fetch blocked');
-if (previousVps === undefined) delete process.env.OPENCHATCUT_VPS; else process.env.OPENCHATCUT_VPS = previousVps;
-if (previousOrigin === undefined) delete process.env.OPENCHATCUT_PUBLIC_ORIGIN; else process.env.OPENCHATCUT_PUBLIC_ORIGIN = previousOrigin;
 
-const bearer = req({ url: '/api/external-mcp/mcp', headers: { authorization: 'Bearer abc' } });
+const bearer = req({ url: '/api/external-mcp/mcp', headers: { ...vpsRequest.headers, authorization: 'Bearer abc' } });
 assert.equal(requestShapeAllowed(bearer), false, 'an arbitrary bearer token does not bypass the origin gate');
 
-const scopedElsewhere = req({ headers: { authorization: `Bearer ${externalMcpToken()}` } });
+const scopedElsewhere = req({ ...vpsRequest, headers: { ...vpsRequest.headers, origin: 'https://evil.example', authorization: `Bearer ${externalMcpToken()}` } });
 assert.equal(requestShapeAllowed(scopedElsewhere), false, 'the MCP token is scoped to its endpoint');
 
 const externalMcp = req({
   url: '/api/external-mcp/mcp',
-  headers: { authorization: `Bearer ${externalMcpToken()}` },
+  socket: { remoteAddress: '10.0.0.5' },
+  headers: { ...vpsRequest.headers, authorization: `Bearer ${externalMcpToken()}` },
 });
 assert.equal(requestShapeAllowed(externalMcp), true, 'the exact MCP token reaches its own endpoint');
 
@@ -76,5 +81,8 @@ assert.equal(requestShapeAllowed({ ...autoEditorWithoutBearer, headers: { author
 
 const handoffUpload = req({ url: '/upload?handoff=opaque-single-use-token', socket: { remoteAddress: '10.0.0.5' }, headers: {} });
 assert.equal(requestShapeAllowed(handoffUpload), true, 'handoff upload reaches its own token verifier');
+
+if (previousVps === undefined) delete process.env.OPENCHATCUT_VPS; else process.env.OPENCHATCUT_VPS = previousVps;
+if (previousOrigin === undefined) delete process.env.OPENCHATCUT_PUBLIC_ORIGIN; else process.env.OPENCHATCUT_PUBLIC_ORIGIN = previousOrigin;
 
 console.log('request-shape-gate.verify: ok');
