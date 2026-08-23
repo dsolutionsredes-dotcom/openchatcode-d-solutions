@@ -6,7 +6,8 @@ import type {
   TransitionType,
 } from '../../editor/types';
 import { defaultTrackId, resolveTrackId } from '../../editor/types';
-import { ALL_FX } from '../../gl/fx/effects';
+import { EFFECT_METADATA, validateEffectOverrides } from '../../gl/fx/effect-metadata';
+import { CUSTOM_FX } from '../../gl/fx/custom-fx-registry';
 import { SOUND_EFFECTS, soundEffectSrc } from '../../audio/soundLibrary';
 import { getCustomTransition, customTransitionUniforms } from '../../gl/customTransitions';
 import { getCustomZoom, zoomFromCustomDef } from '../../editor/customZooms';
@@ -143,9 +144,11 @@ function validateEffectAdd(ctx: AgentContext, entry: Entry): OpResult {
   if (!target || (target.kind !== 'video' && target.kind !== 'image')) {
     return { error: 'effect needs video/image targetItemId', got: entry.targetItemId };
   }
-  if (!(assetId in ALL_FX)) {
+  if (!(assetId in EFFECT_METADATA) && !(assetId in CUSTOM_FX)) {
     return { error: `unknown effect assetId ${assetId}`, hint: 'browse_library category=fx|luts|zoom' };
   }
+  const overrideError = validateEffectOverrides(EFFECT_METADATA[assetId] ?? CUSTOM_FX[assetId], entry.propertyOverrides);
+  if (overrideError) return { error: overrideError };
   const effect = { id: `fx_${crypto.randomUUID()}`, assetId, overrides } satisfies ClipEffect;
   return { ok: true, kind: 'effect', plan: 'addEffect', targetItemId: target.id, effect };
 }
@@ -343,9 +346,15 @@ function validateEffectUpdate(ctx: AgentContext, entry: Entry): OpResult {
   const { item, index } = findEffect(ctx, target, effectId);
   if (!item || index < 0) return effectNotFound(item);
   const current = item.effects![index];
-  const nextAsset = typeof entry.assetId === 'string' && entry.assetId in ALL_FX
+  const nextAsset = typeof entry.assetId === 'string'
+    && (entry.assetId in EFFECT_METADATA || entry.assetId in CUSTOM_FX)
     ? String(entry.assetId)
     : current.assetId;
+  const overrideError = validateEffectOverrides(
+    EFFECT_METADATA[nextAsset] ?? CUSTOM_FX[nextAsset],
+    entry.propertyOverrides,
+  );
+  if (overrideError) return { error: overrideError };
   const overrides = cleanOverrides(entry.propertyOverrides);
   const effect = { ...current, assetId: nextAsset, overrides: { ...current.overrides, ...overrides } } satisfies ClipEffect;
   return { ok: true, kind: 'effect', plan: 'updateEffect', targetItemId: item.id, index, effect };
