@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { AgentCacheMode } from '../../src/agent/settings/agentSettings';
+import { configuredVpsOrigin } from '../project-store-http-auth.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_MESSAGES = 64;
@@ -65,6 +66,8 @@ function validatedMessages(value: unknown): ValidatedCreateInput['messages'] {
 }
 
 export function requestOrigin(req: IncomingMessage): string | null {
+  const configured = configuredVpsOrigin();
+  if (configured) return configured;
   const host = req.headers.host;
   if (!host || /[/\\@?#,\s]/.test(host)) return null;
   try {
