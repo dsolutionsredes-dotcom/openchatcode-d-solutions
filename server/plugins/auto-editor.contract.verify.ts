@@ -4,6 +4,8 @@ import type { ModelMessage } from 'ai';
 import {
   conversationFor,
   conversationKeyFor,
+  ensureExternalProjectWith,
+  externalMessageOf,
   normalizeExternalResponse,
   recoverPendingProposalRuntime,
   saveConversation,
@@ -24,6 +26,36 @@ assert.notEqual(conversationKeyFor(projectId, 'chat-alpha'), conversationKeyFor(
 assert.deepEqual(await conversationFor(projectId, 'chat-alpha'), alpha);
 assert.deepEqual(await conversationFor(projectId, 'chat-beta'), beta);
 assert.deepEqual(await conversationFor(projectId, 'chat-missing'), []);
+
+let createCalls = 0;
+const existingProject = { id: 'official-project-1', name: 'Vale project', updatedAt: 1 };
+const projectDeps = {
+  list: async () => [existingProject],
+  create: async (args: Record<string, unknown>) => {
+    createCalls += 1;
+    return { id: 'official-project-2', name: String(args.name), updatedAt: 2 };
+  },
+} as never;
+const reusedProject = await ensureExternalProjectWith({ projectId: existingProject.id }, projectDeps);
+assert.equal(reusedProject.projectId, existingProject.id);
+assert.equal(reusedProject.reused, true);
+assert.equal(createCalls, 0);
+const createdProject = await ensureExternalProjectWith({ externalProjectName: 'New Vale project' }, {
+  list: async () => [],
+  create: async (args: Record<string, unknown>) => {
+    createCalls += 1;
+    return { id: 'official-project-3', name: String(args.name), updatedAt: 3 };
+  },
+} as never);
+assert.equal(createdProject.projectId, 'official-project-3');
+assert.equal(createdProject.created, true);
+assert.equal(createCalls, 1);
+assert.equal(normalizeExternalResponse({ projectId: 'official-project-3' }, createdProject, {
+  action: 'project_ensure', status: 'created',
+}).data.externalProjectName, 'New Vale project');
+assert.throws(() => externalMessageOf('  '), /message is required/);
+const literalMessage = '  Hazlo más corto.  ';
+assert.equal(externalMessageOf(literalMessage), literalMessage, 'message reaches OpenChatCut byte-for-byte as supplied');
 
 const contractCases = [
   { body: { projectId: 'p' }, value: { ok: true, renderId: 'r1' }, action: 'render', status: 'queued', field: 'renderId' },
