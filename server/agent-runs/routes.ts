@@ -43,7 +43,7 @@ import {
   type ValidatedCreateInput,
 } from './request';
 import { CursorProtocolError, resolveCursor, sseForRun } from './sse';
-import { projectStoreHttpAuthorized, projectStoreReadAuthorized } from '../project-store-http-auth';
+import { trustedEditorRequest } from '../editor-auth';
 const MAX_TOOL_RESULT_BODY_BYTES = 1024 * 1024;
 const SERVER_RUN_CAPABILITY_HEADER = 'x-openchatcut-run-capability';
 const SERVER_RUN_ADMISSION_TIMEOUT_MS = 60_000;
@@ -521,9 +521,7 @@ export function agentRunsPlugin(options: AgentRunsPluginOptions = {}): Plugin {
       (options.activatePersistence ?? activateOfflineAgentRuntimeBackend)();
       server.middlewares.use('/api/agent-runs', async (req, res) => {
         const readOnly = req.method === 'GET';
-        const authorized = readOnly
-          ? projectStoreReadAuthorized(req) || projectStoreHttpAuthorized(req)
-          : projectStoreHttpAuthorized(req);
+        const authorized = trustedEditorRequest(req, !readOnly);
         if (!authorized) {
           sendJson(res, 403, { error: 'invalid agent run session' });
           return;
