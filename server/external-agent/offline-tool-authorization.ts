@@ -23,7 +23,11 @@ export function assertOfflineToolAllowed(
     );
   }
   const policy = policyForTool(name);
-  if (policy.effect !== 'read' && policy.effect !== 'reversible_edit' && name !== 'finalize_uploaded_asset') {
+  // Headless cloud transcription is the one paid external operation admitted
+  // through the already-authenticated AUTO_EDITOR draft boundary. Local and
+  // AssemblyAI providers still fail closed in offline-executor.
+  if (policy.effect !== 'read' && policy.effect !== 'reversible_edit'
+    && name !== 'finalize_uploaded_asset' && name !== 'transcribe_track') {
     throw new ExternalEditorCallError(
       'rejected',
       `Tool ${name} is not permitted by the offline execution policy.`,
