@@ -33,6 +33,7 @@ import { toolResultModelOutput } from '../../src/agent/tool-result-output';
 import { redactTextForAgentRuntime } from '../../src/agent/runtime-artifact';
 import type { AgentToolSchema } from '../../src/agent/tool-schema';
 import { ToolActivation } from '../../src/agent/tool-activation';
+import { resolveSemanticIntent } from '../../src/agent/semantic-intent-resolver';
 import {
   buildServerRunPrompt,
   SERVER_RUN_AI_TIMEOUT,
@@ -306,11 +307,24 @@ export function resolveServerRunCapabilities(
   );
 }
 
-function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
+export async function resolveServerRunSemanticToolNames(
+  catalog: readonly AgentToolSchema[],
+  messages: readonly ModelMessage[],
+  resolver: typeof resolveSemanticIntent = resolveSemanticIntent,
+): Promise<readonly string[]> {
+  try {
+    return (await resolver(catalog, messages)).toolNames;
+  } catch {
+    return [];
+  }
+}
+
+async function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
   const provider = normalizeLlmProvider(input.provider);
   const apiMode = normalizeOpenAiApiMode(input.openAiApiMode);
   const backend = input.backend === 'codex' ? 'codex' : 'api';
   const requested = resolveServerRunToolCatalog(input.tools, run.askOnly);
+  const semanticToolNames = await resolveServerRunSemanticToolNames(input.tools, input.messages);
   const capabilities = resolveServerRunCapabilities(provider, backend, input.model);
   const maxOutputTokens = resolveServerRunMaxOutputTokens(
     input.maxOutputTokens,
@@ -325,6 +339,8 @@ function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
       canonicalServerRunToolCatalog(run.askOnly),
       input.messages,
       requested.map((schema) => schema.name),
+      true,
+      semanticToolNames,
     ),
     tail: Promise.resolve(),
     followupText: null,
@@ -368,7 +384,7 @@ async function executeRunTurns(
   input: ServerRunInput,
   signal: AbortSignal,
 ): Promise<void> {
-  const plan = createExecutionPlan(run, input);
+  const plan = await createExecutionPlan(run, input);
   let messages = plan.prompt.messages;
   // No turn cap: the model decides when the task is done. The only automatic
   // stop beside "no more tool calls" is an output-token cutoff, which would

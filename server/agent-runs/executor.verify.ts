@@ -13,6 +13,7 @@ import {
   serverRunTextMetadata,
   turnDisposition,
   executeBrowserTool,
+  resolveServerRunSemanticToolNames,
 } from './executor.ts';
 import { ToolActivation } from '../../src/agent/tool-activation.ts';
 import { MODEL_CAPABILITY_OVERRIDES_KEY } from '../../shared/model-capabilities';
@@ -30,6 +31,16 @@ function record(value: unknown): Record<string, unknown> {
   assert(value && typeof value === 'object' && !Array.isArray(value));
   return value as Record<string, unknown>;
 }
+
+assert.deepEqual(
+  await resolveServerRunSemanticToolNames(
+    TOOL_SCHEMAS,
+    [{ role: 'user', content: 'pon subtítulos y corta los silencios' }],
+    (async () => { throw new Error('unexpected semantic resolver failure'); }) as never,
+  ),
+  [],
+  'server runs fail open when semantic resolver throws',
+);
 
 
 
