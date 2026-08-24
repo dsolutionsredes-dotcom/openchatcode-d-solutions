@@ -132,6 +132,8 @@ interface ServerRunTransportContext {
   readonly maxOutputTokens: number;
   readonly openAiApiMode?: string;
   readonly externalSessionId?: string;
+  /** Discovery-only names from the optional semantic fallback. */
+  readonly semanticToolNames?: readonly string[];
 }
 function createServerRunIdentity(): Pick<ServerRunPayload, 'runId' | 'capability'> {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -301,7 +303,13 @@ export function buildServerRunPayload(
     ...createServerRunIdentity(),
     projectId,
     messages: [currentMessage],
-    tools: new ToolActivation(catalog, activationMessages).schemas(),
+    tools: new ToolActivation(
+      catalog,
+      activationMessages,
+      [],
+      true,
+      transport.semanticToolNames ?? [],
+    ).schemas(),
     askOnly,
     references: [...(options.references ?? [])],
     ...(transport.systemPrompt ? { systemPrompt: transport.systemPrompt } : {}),

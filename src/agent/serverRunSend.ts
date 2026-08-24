@@ -1,9 +1,12 @@
+import type { ModelMessage } from 'ai';
 import type { AgentContext } from './context';
 import { resolveAgentReferences } from './context';
 import type { ProjectDoc } from '../editor/types';
+import type { AgentToolSchema } from './tool-schema';
 import { TOOL_SCHEMAS } from './tools';
 import { ASK_MODE_TOOL_SCHEMAS } from './ask-mode-tools';
 import { ToolActivation } from './tool-activation';
+import { resolveSemanticIntent } from './semantic-intent-resolver';
 import type { AgentSettings } from './settings/agentSettings';
 import { buildAgentSystemPrompt } from './systemPrompt';
 import { getActiveAgentModelChoice } from './model-selection';
@@ -78,6 +81,18 @@ export interface ServerRunSendEnvironment {
   readonly scheduleRecovery: (runId: string) => void;
   readonly scheduleAdmissionRecovery: (recover: () => void) => void;
   readonly abandonStaleRecovery: (runId: string, error: unknown) => void;
+}
+
+export async function semanticToolNamesForServerRun(
+  catalog: readonly AgentToolSchema[],
+  messages: readonly ModelMessage[],
+  resolver: typeof resolveSemanticIntent = resolveSemanticIntent,
+): Promise<readonly string[]> {
+  try {
+    return (await resolver(catalog, messages)).toolNames;
+  } catch {
+    return [];
+  }
 }
 
 type ServerRunTransientRefs = Pick<
@@ -157,6 +172,13 @@ async function prepareServerRunPayload(
   } else if (!supportsImages) {
     modelMessages = withoutModelImages(modelMessages);
   }
+  let semanticToolNames: readonly string[] = [];
+  if (!sendOptions.askOnly) {
+    semanticToolNames = await semanticToolNamesForServerRun(
+      TOOL_SCHEMAS,
+      [...modelMessages, { role: 'user', content: trimmed }],
+    );
+  }
   const payload = buildServerRunPayload(environment.projectId, content, sendOptions, {
     history: modelMessages,
     systemPrompt: buildAgentSystemPrompt(ctx, settings),
@@ -169,6 +191,7 @@ async function prepareServerRunPayload(
       choice.capabilities.contextWindowTokens.value,
     ),
     openAiApiMode: choice.openAiApiMode,
+    semanticToolNames,
   });
   return {
     payload,

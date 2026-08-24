@@ -30,6 +30,16 @@ export {
 export type { LlmProvider, OpenAiApiMode } from './providerConfig';
 export type ConfiguredLanguageModel = Exclude<LanguageModel, string>;
 
+export interface GeneratedAgentTextUsage {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
+export interface GeneratedAgentTextResult {
+  readonly text: string;
+  readonly usage?: GeneratedAgentTextUsage;
+}
+
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
 // The server proxy target owns the provider/version prefix. AI SDK appends the
 // native operation path, which also supports compatible APIs such as
@@ -157,10 +167,23 @@ export async function generateAgentText(options: {
   prompt?: string;
   messages?: readonly unknown[];
   maxOutputTokens: number;
+  provider?: LlmProvider;
+  model?: string;
 }): Promise<string> {
+  return (await generateAgentTextDetailed(options)).text;
+}
+
+export async function generateAgentTextDetailed(options: {
+  system?: string;
+  prompt?: string;
+  messages?: readonly unknown[];
+  maxOutputTokens: number;
+  provider?: LlmProvider;
+  model?: string;
+}): Promise<GeneratedAgentTextResult> {
   const choice = generationChoice();
-  const provider = choice?.provider ?? PROVIDER;
-  const model = choice?.model ?? MODEL;
+  const provider = options.provider ?? choice?.provider ?? PROVIDER;
+  const model = options.model ?? choice?.model ?? MODEL;
   const apiMode = choice?.openAiApiMode ?? OPENAI_API_MODE;
   const providerOptions = getLanguageModelProviderOptions(provider, apiMode);
   const modelOutputLimit = choice
@@ -184,5 +207,21 @@ export async function generateAgentText(options: {
   const result = messages
     ? await generateText({ ...base, messages })
     : await generateText({ ...base, prompt: options.prompt ?? '' });
-  return result.text;
+  const rawUsage = (result as unknown as {
+    usage?: { inputTokens?: unknown; outputTokens?: unknown };
+  }).usage;
+  const numberOrUndefined = (value: unknown): number | undefined => (
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  );
+  const inputTokens = numberOrUndefined(rawUsage?.inputTokens);
+  const outputTokens = numberOrUndefined(rawUsage?.outputTokens);
+  return {
+    text: result.text,
+    ...(inputTokens !== undefined || outputTokens !== undefined
+      ? { usage: {
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
+        ...(outputTokens !== undefined ? { outputTokens } : {}),
+      } }
+      : {}),
+  };
 }

@@ -144,6 +144,7 @@ export class ToolActivation {
     messages: readonly ModelMessage[],
     activeNames: Iterable<string> = [],
     allowSearch = true,
+    semanticToolNames: Iterable<string> = [],
   ) {
     this.catalog = catalog;
     this.byName = new Map(catalog.map((schema) => [schema.name, schema]));
@@ -154,6 +155,7 @@ export class ToolActivation {
       ...activatedToolNamesFromMessages(messages),
       ...routed.names,
       ...activeNames,
+      ...semanticToolNames,
     ].filter((name) => searchAllowed || name !== 'ToolSearch');
     this.activeNames = new Set(requested.filter((name) => this.byName.has(name)));
   }

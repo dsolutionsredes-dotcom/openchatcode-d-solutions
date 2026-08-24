@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import type { AgentToolSchema } from './tool-schema';
 import type { AgentContext } from './context';
 import type { CodexAgentToolSpec } from '../../shared/codex-agent';
 import type { AgentRunRecorder } from './runtime-ledger';
@@ -25,6 +26,7 @@ import {
 import { runApiAgent } from './api-runtime';
 import type { ToolFailureTracker } from './toolFailure';
 import { ToolActivation } from './tool-activation';
+import { resolveSemanticIntent } from './semantic-intent-resolver';
 import { assertValidAgentToolSchemas } from './execution-policy';
 import {
   loadAgentArtifact,
@@ -41,6 +43,18 @@ export {
   streamPartStartsCompatibleMediaOutput,
 } from './api-runtime';
 export type LLMMessage = ModelMessage;
+
+export async function semanticToolNamesForRuntime(
+  catalog: readonly AgentToolSchema[],
+  messages: readonly ModelMessage[],
+  resolver: typeof resolveSemanticIntent = resolveSemanticIntent,
+): Promise<readonly string[]> {
+  try {
+    return (await resolver(catalog, messages)).toolNames;
+  } catch {
+    return [];
+  }
+}
 export interface AgentRuntimeModule {
   runAgent: typeof runAgent;
 }
@@ -396,7 +410,16 @@ export async function runAgent(
   const toolsAvailable = active.capabilities.supportsTools.value;
   const system = buildAgentSystemPrompt(ctx, { toolsAvailable });
   const toolCatalog = !toolsAvailable ? [] : opts?.askOnly ? ASK_MODE_TOOL_SCHEMAS : TOOL_SCHEMAS;
-  const activation = new ToolActivation(toolCatalog, conv);
+  const semanticToolNames = opts?.toolActivation
+    ? []
+    : await semanticToolNamesForRuntime(toolCatalog, conv);
+  const activation = opts?.toolActivation ?? new ToolActivation(
+    toolCatalog,
+    conv,
+    [],
+    true,
+    semanticToolNames,
+  );
   try {
     assertValidAgentToolSchemas(toolCatalog);
     const validatedCheckpointId = await validateCheckpointHistory(conv, ctx.getProjectId?.());

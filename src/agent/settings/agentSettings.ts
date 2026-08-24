@@ -2,6 +2,10 @@ import {
   isTranscriptionProviderId,
   type TranscriptionProviderId,
 } from '../../transcript/types';
+import {
+  normalizeLlmProvider,
+  type LlmProvider,
+} from '../../../shared/llm-providers';
 // Agent settings that actually change code paths (not soft prompt hints).
 // Ask/YOLO controls proposal application and prompt behavior; built-in tools
 // execute directly in both modes.
@@ -22,6 +26,11 @@ export interface AgentSettings {
   cacheMode: AgentCacheMode;
   /** Opt-in: run the Agent loop on the local server so browser refreshes do not interrupt it. */
   serverRun: boolean;
+  /** Optional discovery fallback; provider credentials remain in the server keystore. */
+  semanticIntentResolverEnabled?: boolean;
+  semanticIntentResolverProvider?: LlmProvider;
+  semanticIntentResolverModel?: string;
+  semanticIntentResolverMaxOutputTokens?: number;
 }
 
 const KEY = 'cc.agentSettings.v1';
@@ -31,6 +40,10 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   planMode: false,
   cacheMode: 'short',
   serverRun: true,
+  semanticIntentResolverEnabled: true,
+  semanticIntentResolverProvider: 'gemini',
+  semanticIntentResolverModel: 'gemini-2.5-flash-lite',
+  semanticIntentResolverMaxOutputTokens: 180,
 };
 
 export function loadAgentSettings(): AgentSettings {
@@ -45,6 +58,18 @@ export function loadAgentSettings(): AgentSettings {
         ? parsed.cacheMode as AgentCacheMode
         : DEFAULT_AGENT_SETTINGS.cacheMode,
       serverRun: true, // server-side execution is the only Agent path (issue-less refactor); stored/old false is ignored.
+      semanticIntentResolverEnabled: parsed.semanticIntentResolverEnabled !== false,
+      semanticIntentResolverProvider: parsed.semanticIntentResolverProvider === undefined
+        ? DEFAULT_AGENT_SETTINGS.semanticIntentResolverProvider
+        : normalizeLlmProvider(parsed.semanticIntentResolverProvider),
+      semanticIntentResolverModel: typeof parsed.semanticIntentResolverModel === 'string'
+        && parsed.semanticIntentResolverModel.trim()
+        ? parsed.semanticIntentResolverModel.trim()
+        : DEFAULT_AGENT_SETTINGS.semanticIntentResolverModel,
+      semanticIntentResolverMaxOutputTokens: typeof parsed.semanticIntentResolverMaxOutputTokens === 'number'
+        && Number.isFinite(parsed.semanticIntentResolverMaxOutputTokens)
+        ? Math.min(512, Math.max(32, Math.round(parsed.semanticIntentResolverMaxOutputTokens)))
+        : DEFAULT_AGENT_SETTINGS.semanticIntentResolverMaxOutputTokens,
     };
   } catch {
     return { ...DEFAULT_AGENT_SETTINGS };

@@ -127,7 +127,7 @@ const ROUTING_GROUPS: readonly RoutingGroup[] = [
     ],
   },
   {
-    requestKeywords: ['export', 'render', 'xml', 'prores', 'premiere', 'resolve', '导出', '渲染', '成片', 'exportar', 'renderizar', 'video final'],
+    requestKeywords: ['export', 'render', 'xml', 'prores', 'premiere', 'resolve', '导出', '渲染', '成片', 'exportar', 'renderizar', 'renderiza', 'video final'],
     tools: [
       'submit_export', 'submit_render_job', 'track_export', 'read_export_history',
       'verify_export', 'download_media', 'export_motion_graphic_prores',
