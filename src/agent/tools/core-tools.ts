@@ -6,18 +6,21 @@ import { prepareTemplate } from '../../template-host';
 import { generateAgentText } from '../client';
 import { designStyleHint } from '../systemPrompt';
 import { execCoreDataTool } from './core-data-tools';
+import { normalizeIntentText, toolSearchAliases } from '../intent-normalization';
 
 type Args = Record<string, unknown>;
 
 function searchTools(args: Args, schemas: readonly AgentToolSchema[]): unknown {
-  const query = String(args.query ?? '').trim().toLowerCase();
+  const query = normalizeIntentText(String(args.query ?? '').trim());
   if (!query) return { error: 'query is required', results: [] };
   const limit = Math.min(12, Math.max(1, Math.round(Number(args.limit) || 8)));
   const tokens = query.split(/\s+/).filter(Boolean);
   const scored = schemas
     .filter((tool) => tool.name !== 'ToolSearch')
     .map((tool) => {
-      const haystack = `${tool.name} ${tool.description ?? ''}`.toLowerCase();
+      const haystack = normalizeIntentText(
+        `${tool.name} ${tool.description ?? ''} ${toolSearchAliases(tool.name)}`,
+      );
       let score = 0;
       for (const token of tokens) {
         if (tool.name.toLowerCase() === token) score += 10;

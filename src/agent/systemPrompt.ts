@@ -11,6 +11,7 @@ import { getLocale } from '../i18n/locale';
 import { findSkill } from './skills/skills-catalog';
 import { skillDependencyPrompt } from './skills/skill-deps';
 import { buildPluginSkillsIndex } from './skills/plugin-skills';
+import { agentLanguageName } from './intent-normalization';
 import {
   agentSettingsPrompt,
   loadAgentSettings,
@@ -37,7 +38,7 @@ export function assembleSystemPrompt(stable: readonly string[], volatilePart: st
 }
 
 export function agentLanguagePrompt(locale: Locale): string {
-  const language = locale === 'zh' ? 'Chinese' : 'English';
+  const language = agentLanguageName(locale);
   return `\n\n# Response Language\nThe interface language is ${language}. Write all user-facing responses, questions, summaries, and generated editing instructions in ${language}.`;
 }
 

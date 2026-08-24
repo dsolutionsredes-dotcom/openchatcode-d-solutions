@@ -3,6 +3,7 @@ import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import type { AgentToolSchema } from './tool-schema';
 import { hasMutationRoutingIntent, routedToolSelection } from './tool-routing';
 import { activatedToolNamesForResult } from './skills/skill-tool-activation';
+import { normalizeIntentText } from './intent-normalization';
 
 const BOOT_TOOL_NAMES: Record<string, true> = {
   ToolSearch: true,
@@ -17,16 +18,19 @@ const BOOT_TOOL_NAMES: Record<string, true> = {
 const READ_ONLY_TERMS = [
   '不要修改', '不要编辑', '只读',
   'read only', 'read-only', 'do not edit', "don't edit", 'without editing',
+  'solo lectura', 'no edites', 'no edites nada', 'no cambies nada', 'no modificar',
+  'sin modificar', 'solo dime', 'solo revisa', 'analiza sin cambiar',
 ];
 
 /** A natural-language hint may narrow initial routing, but never becomes tool authority. */
 function isReadOnlyRoutingHint(request: string): boolean {
-  let remainder = request.toLowerCase();
+  let remainder = normalizeIntentText(request);
   let matched = false;
   for (const term of READ_ONLY_TERMS) {
-    if (!remainder.includes(term)) continue;
+    const normalizedTerm = normalizeIntentText(term);
+    if (!remainder.includes(normalizedTerm)) continue;
     matched = true;
-    remainder = remainder.split(term).join('');
+    remainder = remainder.split(normalizedTerm).join('');
   }
   return matched && !hasMutationRoutingIntent(remainder);
 }
@@ -43,7 +47,7 @@ function textFromMessage(message: ModelMessage): string {
 
 function latestUserText(messages: readonly ModelMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === 'user') return textFromMessage(messages[index]).toLowerCase();
+    if (messages[index]?.role === 'user') return normalizeIntentText(textFromMessage(messages[index]));
   }
   return '';
 }
