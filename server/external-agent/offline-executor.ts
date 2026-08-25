@@ -20,6 +20,7 @@ import { execWatermarkTool } from '../../src/agent/tools/watermark-tools.js';
 import { execFinalizeUpload } from '../../src/agent/tools/upload-finalize.js';
 import { execLibraryTool } from '../../src/agent/tools/library-tools.js';
 import { execEditItemTool } from '../../src/agent/tools/edit-item-tools.js';
+import { normalizeUploadedMedia } from '../plugins/normalize-media.ts';
 
 type Args = Record<string, unknown>;
 
@@ -73,7 +74,14 @@ export async function executeOfflineTool(
   ctx: AgentContext,
 ): Promise<unknown> {
   if (name === 'read_agent_artifact') return execAgentRuntimeTool(name, args, ctx);
-  if (name === 'finalize_uploaded_asset') return execFinalizeUpload(args, ctx);
+  if (name === 'finalize_uploaded_asset') {
+    return execFinalizeUpload(args, ctx, {
+      normalizeUploadedVideo: (src) => normalizeUploadedMedia(src, {
+        logInfo: (message) => console.info(message),
+        logError: (message) => console.error(message),
+      }),
+    });
+  }
   if (CORE_DATA_TOOL_NAMES.has(name)) return execCoreDataTool(name, args, ctx);
   if (name === 'manage_timelines') return execTimelineTool(name, args, ctx);
   if (name === 'edit_track') return execTrackTool(name, args, ctx);

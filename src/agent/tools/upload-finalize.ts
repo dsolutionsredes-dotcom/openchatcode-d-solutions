@@ -31,6 +31,17 @@ import {
 
 type Args = Record<string, unknown>;
 
+export interface UploadFinalizeDependencies {
+  readonly normalizeUploadedVideo?: (src: string) => Promise<{
+    path: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    normalized?: boolean;
+    durationSeconds?: number;
+  }>;
+}
+
 type FinalizeInput = UploadFinalizeIdentity;
 
 interface FinalizedSource {
@@ -165,18 +176,14 @@ function durationForFinalize(args: Args, kind: MediaAsset['kind'], type: string,
   return null;
 }
 
-/** Server-side video compatibility normalization (same as UI importMedia). */
-async function normalizeVideoSrc(src: string): Promise<{
-  src: string; width?: number; height?: number; bytes?: number;
+/** Browser/runtime fallback for callers that do not provide a server normalizer. */
+async function normalizeVideoOverHttp(src: string): Promise<{
+  path: string; width?: number; height?: number; bytes?: number;
   normalized?: boolean; durationSeconds?: number;
 }> {
-  if (!src.startsWith('/media/uploads/')) return { src };
+  if (!src.startsWith('/media/uploads/')) return { path: src };
   try {
-    const origin = typeof location !== 'undefined' && location.origin
-      ? location.origin
-      : (typeof process !== 'undefined' && process.env.OPENCHATCUT_PUBLIC_ORIGIN?.trim())
-        || `http://127.0.0.1:${typeof process !== 'undefined' ? process.env.PORT || '5199' : '5199'}`;
-    const response = await fetch(`${origin}/api/normalize-media`, {
+    const response = await fetch('/api/normalize-media', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ src }),
@@ -188,7 +195,7 @@ async function normalizeVideoSrc(src: string): Promise<{
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     if (!data.path?.startsWith('/media/uploads/')) throw new Error('server returned no media path');
     return {
-      src: data.path,
+      path: data.path,
       width: typeof data.width === 'number' ? data.width : undefined,
       height: typeof data.height === 'number' ? data.height : undefined,
       bytes: typeof data.bytes === 'number' ? data.bytes : undefined,
@@ -207,6 +214,7 @@ async function finalizedSource(
   kind: MediaAsset['kind'],
   fps: number,
   durationInFrames: number,
+  dependencies: UploadFinalizeDependencies,
 ): Promise<FinalizedSource> {
   let src = input.readUrl;
   let width = typeof args.width === 'number' && args.width > 0 ? args.width : undefined;
@@ -214,8 +222,10 @@ async function finalizedSource(
   let finalSize = input.size;
   let normalized = false;
   if (kind === 'video' && input.readUrl.startsWith('/media/uploads/')) {
-    const result = await normalizeVideoSrc(input.readUrl);
-    src = result.src;
+    const result = dependencies.normalizeUploadedVideo
+      ? await dependencies.normalizeUploadedVideo(input.readUrl)
+      : await normalizeVideoOverHttp(input.readUrl);
+    src = result.path;
     width = result.width ?? width;
     height = result.height ?? height;
     finalSize = result.bytes ?? finalSize;
@@ -313,6 +323,7 @@ async function prepareClaimedFinalize(
   args: Args,
   ctx: AgentContext,
   input: FinalizeInput,
+  dependencies: UploadFinalizeDependencies,
 ): Promise<UploadFinalizeJournal> {
   if (args.assetType !== input.type) {
     throw new Error(`assetType does not match the trusted upload receipt (${input.type})`);
@@ -322,7 +333,7 @@ async function prepareClaimedFinalize(
   const fps = ctx.getState().fps || 30;
   const durationInFrames = durationForFinalize(args, kind, input.type, fps);
   if (durationInFrames === null) throw new Error('durationInSeconds is required for audio/video/gif');
-  const source = await finalizedSource(input, args, kind, fps, durationInFrames);
+  const source = await finalizedSource(input, args, kind, fps, durationInFrames, dependencies);
   const expectedRevision = createMediaSourceRevision({
     src: input.readUrl, sourceContentHash: input.sourceContentHash,
   });
@@ -347,11 +358,12 @@ async function executeClaimedFinalize(
   args: Args,
   ctx: AgentContext,
   input: FinalizeInput,
+  dependencies: UploadFinalizeDependencies,
 ): Promise<Record<string, unknown>> {
   let journal: UploadFinalizeJournal | null = null;
   let journalSaved = false;
   try {
-    journal = await prepareClaimedFinalize(args, ctx, input);
+    journal = await prepareClaimedFinalize(args, ctx, input, dependencies);
     await saveUploadFinalizeJournal(journal);
     journalSaved = true;
     const applied = await applyJournalMutation(journal, ctx);
@@ -374,6 +386,7 @@ async function execFinalizeUploadLocked(
   ctx: AgentContext,
   receipt: string,
   projectId: string,
+  dependencies: UploadFinalizeDependencies,
 ): Promise<unknown> {
   try {
     const resumed = await resumeReceiptCommit(receipt, projectId, ctx);
@@ -382,12 +395,13 @@ async function execFinalizeUploadLocked(
     return { error: error instanceof Error ? error.message : String(error) };
   }
   const input = await claimFinalizeInput(receipt, projectId);
-  return 'error' in input ? input : executeClaimedFinalize(args, ctx, input);
+  return 'error' in input ? input : executeClaimedFinalize(args, ctx, input, dependencies);
 }
 
 export async function execFinalizeUpload(
   args: Args,
   ctx: AgentContext,
+  dependencies: UploadFinalizeDependencies = {},
 ): Promise<unknown> {
   const preliminary = validateFinalizeArgs(args);
   if (preliminary.error) return { error: preliminary.error };
@@ -396,6 +410,6 @@ export async function execFinalizeUpload(
   const key = receiptCommitKey({ receipt: preliminary.receipt, projectId });
   return withReceiptCommitLock(
     key,
-    () => execFinalizeUploadLocked(args, ctx, preliminary.receipt, projectId),
+    () => execFinalizeUploadLocked(args, ctx, preliminary.receipt, projectId, dependencies),
   );
 }

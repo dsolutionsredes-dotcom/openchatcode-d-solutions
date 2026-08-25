@@ -11,6 +11,7 @@ import {
 import {
   normalizeMediaFile,
   NormalizeMediaProbeError,
+  type NormalizeMediaFileResult,
 } from '../media-normalization-runner.ts';
 
 export {
@@ -61,6 +62,30 @@ export interface NormalizeMediaPluginOptions {
     context: NormalizeEncodeContext,
     encode: () => Promise<void>,
   ) => Promise<void>;
+}
+
+export interface NormalizeUploadedMediaOptions extends NormalizeMediaPluginOptions {
+  readonly signal?: AbortSignal;
+  readonly force?: boolean;
+  readonly optimize?: boolean;
+  readonly forceCfr?: boolean;
+  readonly targetFps?: number;
+  readonly logInfo?: (message: string) => void;
+  readonly logError?: (message: string) => void;
+}
+
+export interface NormalizedUploadedMedia {
+  readonly path: string;
+  readonly normalized: boolean;
+  readonly reason: string;
+  readonly bytes?: number;
+  readonly bytesBefore?: number;
+  readonly width?: number;
+  readonly height?: number;
+  readonly durationSeconds?: number;
+  readonly videoFrameCount?: number;
+  readonly fps?: number;
+  readonly variableFrameRate?: boolean;
 }
 
 interface NormalizeRequestBody {
@@ -130,6 +155,56 @@ function isPassthrough(name: string): boolean {
   return name.includes('.asr.') || extname(name).toLowerCase() in PASSTHROUGH_EXTENSIONS;
 }
 
+/**
+ * Normalize an uploaded media source without going through the HTTP route.
+ * The route below delegates here too, so server-side imports and browser
+ * requests share exactly the same validation and FFmpeg normalization logic.
+ */
+export async function normalizeUploadedMedia(
+  src: string,
+  options: NormalizeUploadedMediaOptions = {},
+): Promise<NormalizedUploadedMedia> {
+  const name = uploadNameFromSrc(src);
+  if (!name) throw new Error('src must be /media/uploads/<safe-name>');
+  const inputPath = resolveUploadFile(name);
+  if (!inputPath) throw new Error(`media not found: ${name}`);
+  const extension = extname(name).toLowerCase();
+  if (isPassthrough(name)) {
+    return { path: src, normalized: false, reason: 'not a video master' };
+  }
+  if (!(extension in VIDEO_EXTENSIONS) && !options.force) {
+    return { path: src, normalized: false, reason: 'skip non-video extension' };
+  }
+  const result: NormalizeMediaFileResult = await normalizeMediaFile({
+    inputPath,
+    publicSrc: src,
+    force: options.force,
+    optimize: options.optimize,
+    forceCfr: options.forceCfr,
+    targetFps: options.targetFps,
+    signal: options.signal,
+    admission: options.admission,
+    encoderHook: options.encoderHook,
+    publishR2: true,
+    uploadsDirectory: uploadDir(),
+    logInfo: options.logInfo,
+    logError: options.logError,
+  });
+  return {
+    path: result.path,
+    normalized: result.normalized,
+    reason: result.reason,
+    bytes: result.bytes,
+    bytesBefore: result.bytesBefore,
+    width: result.width,
+    height: result.height,
+    durationSeconds: result.durationSeconds,
+    videoFrameCount: result.videoFrameCount,
+    fps: result.sourceFps,
+    variableFrameRate: result.variableFrameRate,
+  };
+}
+
 function sendNormalizeError(
   res: ServerResponse,
   error: unknown,
@@ -149,36 +224,28 @@ function sendNormalizeError(
   sendJson(res, status, { error: message });
 }
 
-interface NormalizeRouteContext {
-  readonly req: IncomingMessage;
-  readonly res: ServerResponse;
-  readonly body: NormalizeRequestBody;
-  readonly src: string;
-  readonly inputPath: string;
-  readonly options: NormalizeMediaPluginOptions;
-  readonly logger: { info(message: string): void; error(message: string): void };
-}
-
-async function normalizeVideoRequest(context: NormalizeRouteContext): Promise<void> {
-  const abort = bindRequestAbort(context.req, context.res);
+async function normalizeVideoRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  src: string,
+  body: NormalizeRequestBody,
+  options: NormalizeMediaPluginOptions,
+  logger: { info(message: string): void; error(message: string): void },
+): Promise<void> {
+  const abort = bindRequestAbort(req, res);
   try {
-    const result = await normalizeMediaFile({
-      inputPath: context.inputPath,
-      publicSrc: context.src,
-      force: context.body.force,
-      optimize: context.body.optimize,
-      forceCfr: context.body.forceCfr,
-      targetFps: context.body.targetFps,
+    const result = await normalizeUploadedMedia(src, {
+      ...options,
+      force: body.force,
+      optimize: body.optimize,
+      forceCfr: body.forceCfr,
+      targetFps: body.targetFps,
       signal: abort.signal,
-      admission: context.options.admission,
-      encoderHook: context.options.encoderHook,
-      publishR2: true,
-      uploadsDirectory: uploadDir(),
-      logInfo: (message) => context.logger.info(message),
-      logError: (message) => context.logger.error(message),
+      logInfo: (message) => logger.info(message),
+      logError: (message) => logger.error(message),
     });
     if (!abort.signal.aborted) {
-      sendJson(context.res, 200, {
+      sendJson(res, 200, {
         ok: true,
         path: result.path,
         normalized: result.normalized,
@@ -189,13 +256,13 @@ async function normalizeVideoRequest(context: NormalizeRouteContext): Promise<vo
         height: result.height,
         durationSeconds: result.durationSeconds,
         videoFrameCount: result.videoFrameCount,
-        fps: result.sourceFps,
+        fps: result.fps,
         variableFrameRate: result.variableFrameRate,
       });
     }
   } catch (error) {
     if (!abort.signal.aborted) {
-      sendNormalizeError(context.res, error, (message) => context.logger.error(message));
+      sendNormalizeError(res, error, (message) => logger.error(message));
     }
   } finally {
     abort.dispose();
@@ -211,26 +278,11 @@ async function handleNormalizeRequest(
 ): Promise<void> {
   const body = (await readJson(req)) as NormalizeRequestBody;
   const src = String(body.src ?? '').trim();
-  const name = uploadNameFromSrc(src);
-  if (!name) {
-    sendJson(res, 400, { error: 'src must be /media/uploads/<safe-name>' });
-    return;
+  try {
+    await normalizeVideoRequest(req, res, src, body, options, logger);
+  } catch (error) {
+    sendNormalizeError(res, error, (message) => logger.error(message));
   }
-  const inputPath = resolveUploadFile(name);
-  if (!inputPath) {
-    sendJson(res, 404, { error: `media not found: ${name}` });
-    return;
-  }
-  const extension = extname(name).toLowerCase();
-  if (isPassthrough(name)) {
-    sendJson(res, 200, { ok: true, path: src, normalized: false, reason: 'not a video master' });
-    return;
-  }
-  if (!(extension in VIDEO_EXTENSIONS) && !body.force) {
-    sendJson(res, 200, { ok: true, path: src, normalized: false, reason: 'skip non-video extension' });
-    return;
-  }
-  await normalizeVideoRequest({ req, res, body, src, inputPath, options, logger });
 }
 
 export function normalizeMediaPlugin(options: NormalizeMediaPluginOptions = {}): Plugin {
