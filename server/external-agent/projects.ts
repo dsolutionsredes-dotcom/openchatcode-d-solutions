@@ -65,6 +65,27 @@ export async function deleteExternalProject(projectId: string): Promise<boolean>
   return true;
 }
 
+export async function renameExternalProject(
+  projectId: string,
+  newName: string,
+): Promise<ProjectMeta | null> {
+  const name = newName.trim();
+  if (!name) throw new Error('Project name is required.');
+
+  const projects = await listExternalProjects(true);
+  const index = projects.findIndex((project) => project.id === projectId);
+  if (index < 0) return null;
+
+  const renamed: ProjectMeta = {
+    ...projects[index],
+    name,
+    updatedAt: Date.now(),
+  };
+  projects[index] = renamed;
+  await setStoredEntry('projects', projects);
+  return renamed;
+}
+
 export async function createExternalProject(
   args: Record<string, unknown>,
 ): Promise<ProjectMeta> {
