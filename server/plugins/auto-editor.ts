@@ -20,7 +20,7 @@ import {
 } from '../agent-runs/executor.ts';
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
 import { mintImportUpload } from '../external-agent/import-token.ts';
-import { createExternalProject, deleteExternalProject, listExternalProjects } from '../external-agent/projects.ts';
+import { createExternalProject, deleteExternalProject, listExternalProjects, renameExternalProject } from '../external-agent/projects.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -121,6 +121,10 @@ type ProjectEnsureDependencies = {
   create: typeof createExternalProject;
 };
 
+type ProjectRenameDependencies = {
+  rename: typeof renameExternalProject;
+};
+
 function externalProjectNameOf(body: Record<string, unknown>): string {
   const value = body.externalProjectName ?? body.name;
   const name = typeof value === 'string' ? value.trim() : '';
@@ -164,6 +168,39 @@ export async function ensureExternalProjectWith(
     ...(typeof body.compositionHeight === 'number' ? { compositionHeight: body.compositionHeight } : {}),
   });
   return { ok: true, projectId: project.id, reused: false, created: true, project, externalProjectName: name };
+}
+
+export async function renameExternalProjectWith(
+  body: Record<string, unknown>,
+  dependencies: ProjectRenameDependencies = { rename: renameExternalProject },
+): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) throw new Error('name is required');
+  const project = await dependencies.rename(projectId, name);
+  if (!project) {
+    return {
+      ok: false,
+      status: 'not_found',
+      action: 'project_rename',
+      message: 'project not found',
+      requiresUserInput: false,
+      errorCode: 'project_not_found',
+      projectId,
+      engine: 'openchatcut',
+    };
+  }
+  return {
+    ok: true,
+    status: 'applied',
+    action: 'project_rename',
+    message: 'project renamed',
+    data: { project },
+    requiresUserInput: false,
+    errorCode: '',
+    projectId,
+    engine: 'openchatcut',
+  };
 }
 
 export function externalMessageOf(value: unknown): string {
@@ -488,6 +525,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return sendExternal(res, 200, body, value, {
         action: 'project_ensure',
         status: value.created === true ? 'created' : 'reused',
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/project/rename') {
+      const body = await readExternalBody();
+      const value = await renameExternalProjectWith(body);
+      return sendExternal(res, value.ok === true ? 200 : 404, body, value, {
+        action: 'project_rename',
+        status: value.ok === true ? 'applied' : 'not_found',
       });
     }
     if (req.method === 'DELETE' && url.pathname.startsWith('/project/')) {
