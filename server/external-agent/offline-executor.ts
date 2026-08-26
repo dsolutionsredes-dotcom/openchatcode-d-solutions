@@ -21,6 +21,7 @@ import { execFinalizeUpload } from '../../src/agent/tools/upload-finalize.js';
 import { execLibraryTool } from '../../src/agent/tools/library-tools.js';
 import { execEditItemTool } from '../../src/agent/tools/edit-item-tools.js';
 import { normalizeUploadedMedia } from '../plugins/normalize-media.ts';
+import { processUploadReceiptAction } from './upload-receipt-action.ts';
 
 type Args = Record<string, unknown>;
 
@@ -76,6 +77,13 @@ export async function executeOfflineTool(
   if (name === 'read_agent_artifact') return execAgentRuntimeTool(name, args, ctx);
   if (name === 'finalize_uploaded_asset') {
     return execFinalizeUpload(args, ctx, {
+      postReceiptAction: async (body) => {
+        const result = processUploadReceiptAction(body);
+        return new Response(JSON.stringify(result.body), {
+          status: result.status,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
       normalizeUploadedVideo: (src) => normalizeUploadedMedia(src, {
         logInfo: (message) => console.info(message),
         logError: (message) => console.error(message),

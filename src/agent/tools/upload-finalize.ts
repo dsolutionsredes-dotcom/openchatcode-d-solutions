@@ -32,6 +32,7 @@ import {
 type Args = Record<string, unknown>;
 
 export interface UploadFinalizeDependencies {
+  readonly postReceiptAction?: (body: Record<string, unknown>) => Promise<Response>;
   readonly normalizeUploadedVideo?: (src: string) => Promise<{
     path: string;
     width?: number;
@@ -90,6 +91,7 @@ function validateFinalizeArgs(args: Args): { receipt: string; error?: string } {
 async function claimFinalizeInput(
   receipt: string,
   projectId: string,
+  dependencies: UploadFinalizeDependencies,
 ): Promise<FinalizeInput | { error: string }> {
   const requestedClaimId = (
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -99,7 +101,7 @@ async function claimFinalizeInput(
   let response: Response | null = null;
   for (let attempt = 0; attempt < 2 && !response; attempt += 1) {
     try {
-      response = await postReceiptAction({
+      response = await (dependencies.postReceiptAction ?? postReceiptAction)({
         action: 'claim',
         receipt,
         projectId,
@@ -110,7 +112,7 @@ async function claimFinalizeInput(
     }
   }
   if (!response) {
-    await postReceiptAction({
+    await (dependencies.postReceiptAction ?? postReceiptAction)({
       action: 'abort',
       receipt,
       projectId,
@@ -120,7 +122,7 @@ async function claimFinalizeInput(
   }
   const value: unknown = await response.json().catch(() => null);
   if (!response.ok || !value || typeof value !== 'object' || Array.isArray(value)) {
-    await postReceiptAction({
+    await (dependencies.postReceiptAction ?? postReceiptAction)({
       action: 'abort',
       receipt,
       projectId,
@@ -153,7 +155,7 @@ async function claimFinalizeInput(
     || readUrl !== `/media/${fileKey}` || !Number.isSafeInteger(size) || size <= 0
     || !Number.isFinite(claimExpiresAt) || claimExpiresAt <= Date.now()
     || !type || !sourceContentHash) {
-    await postReceiptAction({
+    await (dependencies.postReceiptAction ?? postReceiptAction)({
       action: 'abort',
       receipt,
       projectId,
@@ -340,7 +342,7 @@ async function prepareClaimedFinalize(
   if (source.sourceRevision !== expectedRevision) {
     throw new Error('content-derived source revision changed during finalize');
   }
-  const claimExpiresAt = await renewFinalizeClaim(input);
+  const claimExpiresAt = await renewFinalizeClaim(input, dependencies.postReceiptAction);
   if (claimExpiresAt === null) {
     throw new Error('upload receipt claim expired or was superseded before asset commit');
   }
@@ -366,17 +368,19 @@ async function executeClaimedFinalize(
     journal = await prepareClaimedFinalize(args, ctx, input, dependencies);
     await saveUploadFinalizeJournal(journal);
     journalSaved = true;
-    const applied = await applyJournalMutation(journal, ctx);
-    const confirmation = await confirmReceiptCommit(applied, false);
-    if (!confirmation.committed) scheduleReceiptReconciliation(confirmation.journal, ctx);
+    const applied = await applyJournalMutation(journal, ctx, dependencies.postReceiptAction);
+    const confirmation = await confirmReceiptCommit(applied, false, dependencies.postReceiptAction);
+    if (!confirmation.committed) {
+      scheduleReceiptReconciliation(confirmation.journal, ctx, dependencies.postReceiptAction);
+    }
     return receiptCommitResult(applied.result, confirmation.committed
       ? 'committed' : 'reconciliation_pending');
   } catch (error) {
     if (journalSaved && journal && mutationMatchesProject(journal.mutation, ctx)) {
-      scheduleReceiptReconciliation(journal, ctx);
+      scheduleReceiptReconciliation(journal, ctx, dependencies.postReceiptAction);
       return receiptCommitResult(journal.result, 'reconciliation_pending');
     }
-    if (!journalSaved) await settleReceipt(input, 'abort');
+    if (!journalSaved) await settleReceipt(input, 'abort', 2, dependencies.postReceiptAction);
     return { error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -389,12 +393,12 @@ async function execFinalizeUploadLocked(
   dependencies: UploadFinalizeDependencies,
 ): Promise<unknown> {
   try {
-    const resumed = await resumeReceiptCommit(receipt, projectId, ctx);
+    const resumed = await resumeReceiptCommit(receipt, projectId, ctx, dependencies.postReceiptAction);
     if (resumed) return resumed;
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-  const input = await claimFinalizeInput(receipt, projectId);
+  const input = await claimFinalizeInput(receipt, projectId, dependencies);
   return 'error' in input ? input : executeClaimedFinalize(args, ctx, input, dependencies);
 }
 

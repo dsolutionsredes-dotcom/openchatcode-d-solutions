@@ -13,11 +13,9 @@ import type {
 } from '../external-agent/broker.ts';
 import type { mcpTools } from '../external-agent/mcp.ts';
 import {
-  abortUploadReceipt,
-  claimUploadReceipt,
-  commitUploadReceipt,
   mintImportUpload,
 } from '../external-agent/import-token.ts';
+import { processUploadReceiptAction } from '../external-agent/upload-receipt-action.ts';
 import type { claimBrowserProjectOwnership } from '../external-agent/project-edit-ownership.ts';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -283,39 +281,8 @@ async function settleBridgeCall(
 }
 
 async function handleBridgeReceipt(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBridgeJson(req);
-  if (body.action === 'claim') {
-    const claimed = claimUploadReceipt(body.receipt, body.projectId, body.claimId);
-    if (claimed.status !== 'accepted') {
-      sendBridgeJson(res, 409, {
-        error: claimed.status === 'claimed'
-          ? 'upload receipt is already being finalized'
-          : 'upload receipt is invalid, expired, consumed, or outside this project',
-      });
-      return;
-    }
-    sendBridgeJson(res, 200, {
-      ...claimed.value,
-      claimId: claimed.claimId,
-      claimExpiresAt: claimed.claimExpiresAt,
-    });
-    return;
-  }
-  if (body.action === 'commit') {
-    const committed = commitUploadReceipt(body.receipt, body.projectId, body.claimId);
-    sendBridgeJson(res, committed ? 200 : 409, committed
-      ? { ok: true, state: 'committed' }
-      : { error: 'upload receipt claim is invalid, expired, or no longer current' });
-    return;
-  }
-  if (body.action === 'abort') {
-    const aborted = abortUploadReceipt(body.receipt, body.projectId, body.claimId);
-    sendBridgeJson(res, aborted ? 200 : 409, aborted
-      ? { ok: true, state: 'available' }
-      : { error: 'upload receipt claim is invalid, expired, or no longer current' });
-    return;
-  }
-  sendBridgeJson(res, 400, { error: 'upload receipt action must be claim, commit, or abort' });
+  const result = processUploadReceiptAction(await readBridgeJson(req));
+  sendBridgeJson(res, result.status, result.body);
 }
 
 export async function routeExternalAgentBridge(

@@ -24,6 +24,8 @@ export interface PreparedFinalize {
 const receiptCommitQueues = new Map<string, Promise<void>>();
 const reconcilingReceiptCommits = new Set<string>();
 
+export type ReceiptAction = (body: Record<string, unknown>) => Promise<Response>;
+
 export const receiptCommitKey = (
   input: Pick<UploadFinalizeIdentity, 'projectId' | 'receipt'>,
 ) => `${input.projectId}\u0000${input.receipt}`;
@@ -54,8 +56,11 @@ export async function postReceiptAction(body: Record<string, unknown>): Promise<
   });
 }
 
-export async function renewFinalizeClaim(input: UploadFinalizeIdentity): Promise<number | null> {
-  const response = await postReceiptAction({
+export async function renewFinalizeClaim(
+  input: UploadFinalizeIdentity,
+  receiptAction: ReceiptAction = postReceiptAction,
+): Promise<number | null> {
+  const response = await receiptAction({
     action: 'claim', receipt: input.receipt, projectId: input.projectId, claimId: input.claimId,
   }).catch(() => null);
   if (!response?.ok) return null;
@@ -78,10 +83,11 @@ export async function settleReceipt(
   input: Pick<UploadFinalizeIdentity, 'receipt' | 'claimId' | 'projectId'>,
   action: 'commit' | 'abort',
   attempts = 2,
+  receiptAction: ReceiptAction = postReceiptAction,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const response = await postReceiptAction({
+      const response = await receiptAction({
         action, receipt: input.receipt, projectId: input.projectId, claimId: input.claimId,
       });
       if (!response.ok) return false;
@@ -117,22 +123,25 @@ function reconciliationDelay(ms: number): Promise<void> {
 export async function confirmReceiptCommit(
   journal: UploadFinalizeJournal,
   allowRenewal: boolean,
+  receiptAction: ReceiptAction = postReceiptAction,
 ): Promise<{ journal: UploadFinalizeJournal; committed: boolean }> {
-  if (await settleReceipt(journal.identity, 'commit')) {
+  if (await settleReceipt(journal.identity, 'commit', 2, receiptAction)) {
     await deleteUploadFinalizeJournal(journal.identity.projectId, journal.identity.receipt);
     return { journal, committed: true };
   }
   if (!allowRenewal || Date.now() < journal.identity.claimExpiresAt) {
     return { journal, committed: false };
   }
-  const claimExpiresAt = await renewFinalizeClaim(journal.identity);
+  const claimExpiresAt = await renewFinalizeClaim(journal.identity, receiptAction);
   if (claimExpiresAt === null) return { journal, committed: false };
   const renewed = {
     ...journal,
     identity: { ...journal.identity, claimExpiresAt },
   };
   await saveUploadFinalizeJournal(renewed).catch(() => undefined);
-  if (!await settleReceipt(renewed.identity, 'commit')) return { journal: renewed, committed: false };
+  if (!await settleReceipt(renewed.identity, 'commit', 2, receiptAction)) {
+    return { journal: renewed, committed: false };
+  }
   await deleteUploadFinalizeJournal(renewed.identity.projectId, renewed.identity.receipt);
   return { journal: renewed, committed: true };
 }
@@ -225,14 +234,18 @@ export function assertValidFinalizeJournal(journal: UploadFinalizeJournal): void
   }
 }
 
-export async function abortPreparedJournal(journal: UploadFinalizeJournal): Promise<void> {
-  if (!await settleReceipt(journal.identity, 'abort')) return;
+export async function abortPreparedJournal(
+  journal: UploadFinalizeJournal,
+  receiptAction: ReceiptAction = postReceiptAction,
+): Promise<void> {
+  if (!await settleReceipt(journal.identity, 'abort', 2, receiptAction)) return;
   await deleteUploadFinalizeJournal(journal.identity.projectId, journal.identity.receipt);
 }
 
 export async function applyJournalMutation(
   journal: UploadFinalizeJournal,
   ctx: AgentContext,
+  receiptAction: ReceiptAction = postReceiptAction,
 ): Promise<UploadFinalizeJournal> {
   const matches = mutationMatchesProject(journal.mutation, ctx);
   if (matches && journal.status === 'mutation_applied') return journal;
@@ -246,7 +259,7 @@ export async function applyJournalMutation(
     try {
       applyFinalizeMutation(journal.mutation, ctx);
     } catch (error) {
-      if (journal.status === 'prepared') await abortPreparedJournal(journal);
+      if (journal.status === 'prepared') await abortPreparedJournal(journal, receiptAction);
       throw error;
     }
   }
@@ -279,6 +292,7 @@ export async function createFinalizeJournal(
 export function scheduleReceiptReconciliation(
   journal: UploadFinalizeJournal,
   ctx: AgentContext,
+  receiptAction: ReceiptAction = postReceiptAction,
 ): void {
   const key = receiptCommitKey(journal.identity);
   if (reconcilingReceiptCommits.has(key)) return;
@@ -291,8 +305,8 @@ export function scheduleReceiptReconciliation(
       );
       if (!loaded) return;
       assertValidFinalizeJournal(loaded);
-      const applied = await applyJournalMutation(loaded, ctx);
-      await confirmReceiptCommit(applied, false);
+      const applied = await applyJournalMutation(loaded, ctx, receiptAction);
+      await confirmReceiptCommit(applied, false, receiptAction);
     }))
     .catch(() => undefined)
     .finally(() => reconcilingReceiptCommits.delete(key));
@@ -302,21 +316,24 @@ export async function resumeReceiptCommit(
   receipt: string,
   projectId: string,
   ctx: AgentContext,
+  receiptAction: ReceiptAction = postReceiptAction,
 ): Promise<Record<string, unknown> | null> {
   const journal = await loadUploadFinalizeJournal(projectId, receipt);
   if (!journal) return null;
   assertValidFinalizeJournal(journal);
   try {
-    const applied = await applyJournalMutation(journal, ctx);
-    const confirmation = await confirmReceiptCommit(applied, true);
-    if (!confirmation.committed) scheduleReceiptReconciliation(confirmation.journal, ctx);
+    const applied = await applyJournalMutation(journal, ctx, receiptAction);
+    const confirmation = await confirmReceiptCommit(applied, true, receiptAction);
+    if (!confirmation.committed) {
+      scheduleReceiptReconciliation(confirmation.journal, ctx, receiptAction);
+    }
     return receiptCommitResult(applied.result, confirmation.committed
       ? 'committed' : 'reconciliation_pending');
   } catch (error) {
     if (!mutationMatchesProject(journal.mutation, ctx)) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
-    scheduleReceiptReconciliation(journal, ctx);
+    scheduleReceiptReconciliation(journal, ctx, receiptAction);
     return receiptCommitResult(journal.result, 'reconciliation_pending');
   }
 }
