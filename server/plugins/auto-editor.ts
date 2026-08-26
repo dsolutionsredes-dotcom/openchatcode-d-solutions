@@ -485,25 +485,30 @@ async function createOfficialImportSession(body: Record<string, unknown>): Promi
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const runtime = await runtimeFor(projectId);
-  const started = await runtime.execute('begin_edit_session', { clientName: 'n8n-import', approvalMode: 'auto' });
-  const editSessionId = typeof started === 'object' && started && 'editSessionId' in started
-    ? String((started as Record<string, unknown>).editSessionId)
-    : '';
-  if (!editSessionId) throw new Error('official import session did not return an edit session id');
-  const finalized = await runtime.execute('finalize_uploaded_asset', {
-    ...body,
-    editSessionId,
-  });
-  if (finalized && typeof finalized === 'object' && 'error' in finalized) {
-    throw new Error(String((finalized as Record<string, unknown>).error));
+  try {
+    const started = await runtime.execute('begin_edit_session', { clientName: 'n8n-import', approvalMode: 'auto' });
+    const editSessionId = typeof started === 'object' && started && 'editSessionId' in started
+      ? String((started as Record<string, unknown>).editSessionId)
+      : '';
+    if (!editSessionId) throw new Error('official import session did not return an edit session id');
+    const finalized = await runtime.execute('finalize_uploaded_asset', {
+      ...body,
+      editSessionId,
+    });
+    if (finalized && typeof finalized === 'object' && 'error' in finalized) {
+      throw new Error(String((finalized as Record<string, unknown>).error));
+    }
+    const reviewed = await runtime.execute('review_edit_session', {
+      editSessionId,
+      summary: 'Official n8n media import',
+    });
+    return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
+  } finally {
+    // A failed finalize can leave this runtime stale. Never let it poison the
+    // next n8n import for the same project.
+    if (runtimeByProject.get(projectId) === runtime) runtimeByProject.delete(projectId);
+    await runtime.dispose().catch(() => undefined);
   }
-  const reviewed = await runtime.execute('review_edit_session', {
-    editSessionId,
-    summary: 'Official n8n media import',
-  });
-  await runtime.dispose();
-  runtimeByProject.delete(projectId);
-  return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
