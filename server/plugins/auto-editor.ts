@@ -20,7 +20,7 @@ import {
 } from '../agent-runs/executor.ts';
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
 import { mintImportUpload } from '../external-agent/import-token.ts';
-import { createExternalProject, deleteExternalProject, listExternalProjects, renameExternalProject } from '../external-agent/projects.ts';
+import { createExternalProject, deleteExternalProjectWithMedia, listExternalProjects, renameExternalProject } from '../external-agent/projects.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -547,13 +547,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         runtimeByProject.delete(projectId);
         await runtime.dispose();
       }
-      const deleted = await deleteExternalProject(projectId);
+      const deletion = await deleteExternalProjectWithMedia(projectId);
+      const deleted = deletion.deleted;
       return sendExternal(res, deleted ? 200 : 404, { projectId }, {
         ok: deleted,
         status: deleted ? 'deleted' : 'not_found',
         action: 'project_delete',
         message: deleted ? 'project deleted' : 'project not found',
-        data: { deleted },
+        data: { deleted, mediaDeleted: deletion.mediaDeleted, previewsDeleted: deletion.previewsDeleted },
         requiresUserInput: false,
         errorCode: deleted ? '' : 'project_not_found',
         projectId,

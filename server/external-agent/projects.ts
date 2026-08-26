@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { purgeProjectPermanently, readStore, setStoredEntry } from '../plugins/project-store.ts';
+import { deleteMediaPreviewDerivatives } from '../plugins/media-preview.ts';
+import { isSafeUploadName, uploadReadDirs } from '../media-dir.ts';
+import { deleteUploadObject } from '../r2.ts';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version.ts';
+
+const MEDIA_PREFIX = '/media/uploads/';
 
 interface ProjectMeta {
   id: string;
@@ -57,12 +64,65 @@ export async function listExternalProjects(includeDeleted = false): Promise<Proj
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Permanently remove the OpenChatCut project through the official store purge. */
-export async function deleteExternalProject(projectId: string): Promise<boolean> {
+function uploadSrcsIn(value: unknown): string[] {
+  let text: string;
+  try { text = typeof value === 'string' ? value : JSON.stringify(value); }
+  catch { return []; }
+  const found = new Set<string>();
+  for (const [, rawName] of text.matchAll(/\/media\/uploads\/([^"'\\/\s?#]+)/g)) {
+    const name = decodeURIComponent(rawName);
+    if (isSafeUploadName(name)) found.add(`${MEDIA_PREFIX}${name}`);
+  }
+  return [...found];
+}
+
+export interface ExternalProjectDeleteResult {
+  readonly deleted: boolean;
+  readonly mediaDeleted: number;
+  readonly previewsDeleted: number;
+}
+
+/**
+ * Permanently delete a project and only the media masters that no remaining
+ * project references. Preview derivatives are removed with their master.
+ */
+export async function deleteExternalProjectWithMedia(
+  projectId: string,
+): Promise<ExternalProjectDeleteResult> {
   const exists = (await listExternalProjects(true)).some((project) => project.id === projectId);
-  if (!exists) return false;
+  if (!exists) return { deleted: false, mediaDeleted: 0, previewsDeleted: 0 };
+
+  const store = await readStore();
+  const own = new Set(uploadSrcsIn(store.entries[`project:${projectId}`]));
+  const retained = new Set<string>();
+  for (const [key, value] of Object.entries(store.entries)) {
+    if (!key.startsWith('project:') || key === `project:${projectId}`) continue;
+    for (const src of uploadSrcsIn(value)) retained.add(src);
+  }
+
   await purgeProjectPermanently(projectId);
-  return true;
+  let mediaDeleted = 0;
+  let previewsDeleted = 0;
+  for (const src of own) {
+    if (retained.has(src)) continue;
+    const name = basename(src);
+    for (const directory of uploadReadDirs()) {
+      try {
+        await unlink(join(directory, name));
+        mediaDeleted += 1;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
+    await deleteUploadObject(name).catch(() => false);
+    previewsDeleted += await deleteMediaPreviewDerivatives(name);
+  }
+  return { deleted: true, mediaDeleted, previewsDeleted };
+}
+
+/** Backward-compatible boolean deletion API. */
+export async function deleteExternalProject(projectId: string): Promise<boolean> {
+  return (await deleteExternalProjectWithMedia(projectId)).deleted;
 }
 
 export async function renameExternalProject(

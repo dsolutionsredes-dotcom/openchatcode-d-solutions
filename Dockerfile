@@ -24,7 +24,9 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci
+# Keep npm's install cache in the image build layer, never in the persistent
+# /data volume that holds projects, settings, and media at runtime.
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci --cache /tmp/npm-cache
 COPY . .
 RUN npm run build && npm run build:vps
 
@@ -33,4 +35,4 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl --fail http://127.0.0.1:5199/health || exit 1
 
-CMD ["npm", "run", "start:vps"]
+CMD ["node", "server-dist/vps-server.mjs"]
