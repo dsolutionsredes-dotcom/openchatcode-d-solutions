@@ -21,6 +21,7 @@ import { getKey } from '../keystore';
 import {
   assertCanonicalToolInvocation,
   canonicalServerRunToolCatalog,
+  resolveServerRunToolCatalogAgainst,
   resolveServerRunToolCatalog,
 } from './tool-policy';
 import { createServerLanguageModel, serverProviderOptions } from './model';
@@ -95,6 +96,8 @@ export interface ServerRunInput {
   readonly instructions?: string;
   /** When present, server-run tools execute through the official server-direct path. */
   readonly headlessToolExecutor?: ActivationState['executeTool'];
+  /** Immutable catalog for an authenticated headless runtime, if it differs from browser tools. */
+  readonly headlessToolCatalog?: readonly AgentToolSchema[];
 }
 
 type ServerTurnInput = Omit<ServerContextInput, 'schemas'> & {
@@ -323,7 +326,11 @@ async function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
   const provider = normalizeLlmProvider(input.provider);
   const apiMode = normalizeOpenAiApiMode(input.openAiApiMode);
   const backend = input.backend === 'codex' ? 'codex' : 'api';
-  const requested = resolveServerRunToolCatalog(input.tools, run.askOnly);
+  const canonicalCatalog = input.headlessToolCatalog
+    ?? canonicalServerRunToolCatalog(run.askOnly);
+  const requested = input.headlessToolCatalog
+    ? resolveServerRunToolCatalogAgainst(input.tools, canonicalCatalog)
+    : resolveServerRunToolCatalog(input.tools, run.askOnly);
   const semanticToolNames = await resolveServerRunSemanticToolNames(input.tools, input.messages);
   const capabilities = resolveServerRunCapabilities(provider, backend, input.model);
   const maxOutputTokens = resolveServerRunMaxOutputTokens(
@@ -336,7 +343,7 @@ async function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
     : capabilities.maxInputTokens.value;
   const activation = {
     current: new ToolActivation(
-      canonicalServerRunToolCatalog(run.askOnly),
+      canonicalCatalog,
       input.messages,
       requested.map((schema) => schema.name),
       true,

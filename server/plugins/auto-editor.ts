@@ -344,6 +344,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
     tools: schemas,
     instructions,
     headlessToolExecutor: async (schema, args) => runtime.execute(schema.name, args),
+    headlessToolCatalog: schemas,
   };
   await executeRun(run, execution);
   const text = runMessage(run);

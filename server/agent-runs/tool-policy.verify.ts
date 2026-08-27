@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { ASK_MODE_TOOL_SCHEMAS } from '../../src/agent/ask-mode-tools.ts';
 import { TOOL_SCHEMAS } from '../../src/agent/tools.ts';
+import { offlineExternalToolSchemas } from '../external-agent/offline-tools.ts';
 import {
   canonicalServerRunToolCatalog,
+  resolveServerRunToolCatalogAgainst,
   resolveServerRunToolCatalog,
 } from './tool-policy.ts';
 import { serverToolCatalogForGeneration } from './tool-catalog-generation.ts';
@@ -46,6 +48,22 @@ assert.throws(
   () => resolveServerRunToolCatalog([editOnly], true),
   /Non-canonical or inactive/,
   'Ask mode cannot smuggle an editing schema into the server catalog',
+);
+
+const offlineCatalog = offlineExternalToolSchemas();
+const beginEditSession = offlineCatalog.find((schema) => schema.name === 'begin_edit_session');
+assert(beginEditSession, 'offline catalog exposes the edit-session lifecycle');
+assert.deepEqual(
+  resolveServerRunToolCatalogAgainst([beginEditSession], offlineCatalog),
+  [beginEditSession],
+  'authenticated headless hosts can use their own immutable tool catalog',
+);
+assert.throws(
+  () => resolveServerRunToolCatalogAgainst([
+    { ...beginEditSession, description: `${beginEditSession.description ?? ''} forged` },
+  ], offlineCatalog),
+  /Non-canonical or inactive/,
+  'headless catalogs reject forged schemas too',
 );
 
 console.log('server run canonical tool policy verification passed');

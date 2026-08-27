@@ -78,12 +78,11 @@ export function canonicalServerRunToolCatalog(
   return canonical;
 }
 
-/** Resolve a browser-supplied tool list to immutable canonical request-scoped schemas. */
-export function resolveServerRunToolCatalog(
+/** Resolve a tool list against an immutable server-owned catalog. */
+export function resolveServerRunToolCatalogAgainst(
   requested: readonly unknown[],
-  askOnly: boolean,
+  canonical: readonly AgentToolSchema[],
 ): readonly AgentToolSchema[] {
-  const canonical = canonicalServerRunToolCatalog(askOnly);
   const byName = new Map(canonical.map((schema) => [schema.name, schema]));
   const selected: AgentToolSchema[] = [];
   const names = new Set<string>();
@@ -101,6 +100,17 @@ export function resolveServerRunToolCatalog(
     selected.push(schema);
   }
   return selected;
+}
+
+/** Resolve a browser-supplied tool list to immutable canonical request-scoped schemas. */
+export function resolveServerRunToolCatalog(
+  requested: readonly unknown[],
+  askOnly: boolean,
+): readonly AgentToolSchema[] {
+  return resolveServerRunToolCatalogAgainst(
+    requested,
+    canonicalServerRunToolCatalog(askOnly),
+  );
 }
 
 export function assertCanonicalToolInvocation(
