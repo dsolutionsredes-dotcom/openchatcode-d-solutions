@@ -524,6 +524,13 @@ async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Re
   } catch (error) {
     if (!isStaleOfflineRevision(error)) throw error;
 
+    const pending = runtime.currentSessionInfo();
+    if (pending?.status === 'drafting' || pending?.status === 'awaiting_review') {
+      // A pending proposal belongs to the user. Never discard it merely to
+      // retry an asset import against a newer project revision.
+      throw error;
+    }
+
     // A completed auto-editor turn can leave an idle runtime tied to the
     // previous project revision. Importing must use a fresh snapshot instead
     // of asking n8n (or the user) to restart a session.
