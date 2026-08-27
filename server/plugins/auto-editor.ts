@@ -483,32 +483,56 @@ async function createOfficialImportSession(body: Record<string, unknown>): Promi
   };
 }
 
+async function finalizeOfficialImportWithRuntime(
+  runtime: OfflineExternalEditRuntime,
+  projectId: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const started = await runtime.execute('begin_edit_session', { clientName: 'n8n-import', approvalMode: 'auto' });
+  const editSessionId = typeof started === 'object' && started && 'editSessionId' in started
+    ? String((started as Record<string, unknown>).editSessionId)
+    : '';
+  if (!editSessionId) throw new Error('official import session did not return an edit session id');
+  const finalized = await runtime.execute('finalize_uploaded_asset', {
+    ...body,
+    editSessionId,
+  });
+  if (finalized && typeof finalized === 'object' && 'error' in finalized) {
+    throw new Error(String((finalized as Record<string, unknown>).error));
+  }
+  const reviewed = await runtime.execute('review_edit_session', {
+    editSessionId,
+    summary: 'Official n8n media import',
+  });
+  return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
+}
+
+async function releaseOfficialImportRuntime(projectId: string, runtime: OfflineExternalEditRuntime): Promise<void> {
+  if (runtimeByProject.get(projectId) === runtime) runtimeByProject.delete(projectId);
+  await runtime.dispose().catch(() => undefined);
+}
+
+function isStaleOfflineRevision(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('changed ownership or revision during the offline edit');
+}
+
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
-  const runtime = await runtimeFor(projectId);
+  let runtime = await runtimeFor(projectId);
   try {
-    const started = await runtime.execute('begin_edit_session', { clientName: 'n8n-import', approvalMode: 'auto' });
-    const editSessionId = typeof started === 'object' && started && 'editSessionId' in started
-      ? String((started as Record<string, unknown>).editSessionId)
-      : '';
-    if (!editSessionId) throw new Error('official import session did not return an edit session id');
-    const finalized = await runtime.execute('finalize_uploaded_asset', {
-      ...body,
-      editSessionId,
-    });
-    if (finalized && typeof finalized === 'object' && 'error' in finalized) {
-      throw new Error(String((finalized as Record<string, unknown>).error));
-    }
-    const reviewed = await runtime.execute('review_edit_session', {
-      editSessionId,
-      summary: 'Official n8n media import',
-    });
-    return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
+    return await finalizeOfficialImportWithRuntime(runtime, projectId, body);
+  } catch (error) {
+    if (!isStaleOfflineRevision(error)) throw error;
+
+    // A completed auto-editor turn can leave an idle runtime tied to the
+    // previous project revision. Importing must use a fresh snapshot instead
+    // of asking n8n (or the user) to restart a session.
+    await releaseOfficialImportRuntime(projectId, runtime);
+    runtime = await runtimeFor(projectId);
+    return await finalizeOfficialImportWithRuntime(runtime, projectId, body);
   } finally {
-    // A failed finalize can leave this runtime stale. Never let it poison the
-    // next n8n import for the same project.
-    if (runtimeByProject.get(projectId) === runtime) runtimeByProject.delete(projectId);
-    await runtime.dispose().catch(() => undefined);
+    // An import runtime is short-lived. It must never poison a later import.
+    await releaseOfficialImportRuntime(projectId, runtime);
   }
 }
 
