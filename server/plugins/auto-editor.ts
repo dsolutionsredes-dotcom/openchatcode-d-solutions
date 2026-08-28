@@ -21,6 +21,8 @@ import {
 import { createRunWithCapability, getRun, recoverServerRun } from '../agent-runs/store.ts';
 import { mintImportUpload } from '../external-agent/import-token.ts';
 import { createExternalProject, deleteExternalProjectWithMedia, listExternalProjects, renameExternalProject } from '../external-agent/projects.ts';
+import { externalUploadMediaType } from '../../src/media/uploadMediaType.ts';
+import { googleDriveFileMetadata, googleDriveFileStream } from '../google-drive-service-account.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -516,6 +518,57 @@ function isStaleOfflineRevision(error: unknown): boolean {
   return error instanceof Error && error.message.includes('changed ownership or revision during the offline edit');
 }
 
+async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  const assetType = typeof body.assetType === 'string' ? body.assetType.trim() : '';
+  const driveId = typeof body.driveId === 'string' ? body.driveId.trim() : '';
+  const metadata = await googleDriveFileMetadata(driveId);
+  if (!metadata.canDownload) throw new Error('Google Drive indica que este archivo no se puede descargar.');
+  if (!externalUploadMediaType(assetType, metadata.mimeType)) {
+    throw new Error(`El archivo de Drive no es compatible con assetType=${assetType || '(vacío)'} y MIME=${metadata.mimeType || '(vacío)'}.`);
+  }
+
+  const session = await createOfficialImportSession({
+    projectId,
+    assetType,
+    filename: metadata.name,
+    contentType: metadata.mimeType,
+    size: metadata.size,
+  });
+  const publicUploadUrl = typeof session.uploadUrl === 'string' ? session.uploadUrl : '';
+  const handoff = new URL(publicUploadUrl);
+  const driveStream = await googleDriveFileStream(metadata.id);
+  const uploadResponse = await fetch(`${internalOrigin()}${handoff.pathname}${handoff.search}`, {
+    method: 'POST',
+    headers: {
+      'content-type': metadata.mimeType,
+      'content-length': String(metadata.size),
+    },
+    body: driveStream,
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' });
+  const upload = await uploadResponse.json().catch(() => ({})) as Record<string, unknown>;
+  const receipt = typeof upload.receipt === 'string' ? upload.receipt : '';
+  const path = typeof upload.path === 'string' ? upload.path : '';
+  if (!uploadResponse.ok || !receipt || !path) {
+    const detail = typeof upload.error === 'string' ? upload.error : `HTTP ${uploadResponse.status}`;
+    throw new Error(`OpenChatCut no pudo recibir el archivo desde Google Drive: ${detail}`);
+  }
+
+  const finalizeBody: Record<string, unknown> = { projectId, receipt, assetType };
+  if (assetType === 'audio' || assetType === 'gif' || assetType === 'video') {
+    const durationResponse = await fetch(`${internalOrigin()}/api/waveform?src=${encodeURIComponent(path)}`);
+    const durationData = await durationResponse.json().catch(() => ({})) as Record<string, unknown>;
+    const durationInSeconds = Number(durationData.durationMs) / 1000;
+    if (!durationResponse.ok || !Number.isFinite(durationInSeconds) || durationInSeconds <= 0) {
+      throw new Error('OpenChatCut no pudo medir la duración del archivo importado desde Google Drive.');
+    }
+    finalizeBody.durationInSeconds = durationInSeconds;
+  }
+  const finalized = await finalizeOfficialImport(finalizeBody);
+  return { ...finalized, driveId: metadata.id, filename: metadata.name, contentType: metadata.mimeType, size: metadata.size };
+}
+
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   let runtime = await runtimeFor(projectId);
@@ -594,6 +647,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }, { action: 'project_delete', status: deleted ? 'deleted' : 'failed' });
     }
     if (req.method === 'POST' && url.pathname === '/import/session') return sendExternal(res, 201, requestBody = await readExternalBody(), await createOfficialImportSession(requestBody), { action: 'import', status: 'awaiting_upload' });
+    if (req.method === 'POST' && url.pathname === '/import/drive') return sendExternal(res, 200, requestBody = await readExternalBody(), await importOfficialDriveAsset(requestBody), { action: 'import', status: 'applied' });
     if (req.method === 'POST' && url.pathname === '/import/finalize') return sendExternal(res, 200, requestBody = await readExternalBody(), await finalizeOfficialImport(requestBody), { action: 'import_finalize', status: 'applied' });
     if (req.method === 'POST' && url.pathname === '/render') return sendExternal(res, 200, requestBody = await readExternalBody(), await officialRender(requestBody, false), { action: 'render', status: 'queued' });
     if (req.method === 'POST' && url.pathname === '/preview') return sendExternal(res, 200, requestBody = await readExternalBody(), await officialRender(requestBody, true), { action: 'preview', status: 'queued' });
