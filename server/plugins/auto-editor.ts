@@ -571,6 +571,19 @@ async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<
 
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
+  // Imports are self-contained operations. Reusing an idle agent runtime can
+  // carry an old project revision from a browser/editor turn; a stale review
+  // would consume the one-shot upload receipt and make a retry impossible.
+  // A pending proposal is user-owned, so never discard it just to import.
+  const cached = runtimeByProject.get(projectId);
+  if (cached) {
+    const pending = cached.currentSessionInfo();
+    if (pending?.status === 'drafting' || pending?.status === 'awaiting_review') {
+      throw new Error('OpenChatCut tiene una propuesta pendiente; apruébala o recházala antes de importar un archivo nuevo.');
+    }
+    await releaseOfficialImportRuntime(projectId, cached);
+  }
+
   let runtime = await runtimeFor(projectId);
   try {
     return await finalizeOfficialImportWithRuntime(runtime, projectId, body);
