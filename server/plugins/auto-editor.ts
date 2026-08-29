@@ -30,6 +30,19 @@ export function conversationKeyFor(projectId: string, conversationId = 'default'
 }
 const runtimeByProject = new Map<string, OfflineExternalEditRuntime>();
 
+/**
+ * `finalize_uploaded_asset` commits its opaque receipt before the offline
+ * review commits the project draft.  If that later review loses the project
+ * revision, this marks the only safe recovery: create a new upload receipt
+ * and transfer the Drive source again.  Reusing the old receipt is forbidden.
+ */
+class DriveImportRetryRequiredError extends Error {
+  constructor() {
+    super('The project revision changed after the upload receipt was finalized.');
+    this.name = 'DriveImportRetryRequiredError';
+  }
+}
+
 type ExternalResponseDefaults = {
   action: string;
   status: string;
@@ -502,10 +515,18 @@ async function finalizeOfficialImportWithRuntime(
   if (finalized && typeof finalized === 'object' && 'error' in finalized) {
     throw new Error(String((finalized as Record<string, unknown>).error));
   }
-  const reviewed = await runtime.execute('review_edit_session', {
-    editSessionId,
-    summary: 'Official n8n media import',
-  });
+  let reviewed: unknown;
+  try {
+    reviewed = await runtime.execute('review_edit_session', {
+      editSessionId,
+      summary: 'Official n8n media import',
+    });
+  } catch (error) {
+    // The receipt was already committed above.  Retrying this whole method
+    // would claim that one-shot receipt for a second time.
+    if (isStaleOfflineRevision(error)) throw new DriveImportRetryRequiredError();
+    throw error;
+  }
   return { ok: true, projectId, ...((finalized ?? {}) as Record<string, unknown>), review: reviewed, engine: 'openchatcut-official-import' };
 }
 
@@ -518,7 +539,7 @@ function isStaleOfflineRevision(error: unknown): boolean {
   return error instanceof Error && error.message.includes('changed ownership or revision during the offline edit');
 }
 
-async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function importOfficialDriveAssetOnce(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const assetType = typeof body.assetType === 'string' ? body.assetType.trim() : '';
   const driveId = typeof body.driveId === 'string' ? body.driveId.trim() : '';
@@ -567,6 +588,18 @@ async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<
   }
   const finalized = await finalizeOfficialImport(finalizeBody);
   return { ...finalized, driveId: metadata.id, filename: metadata.name, contentType: metadata.mimeType, size: metadata.size };
+}
+
+async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    return await importOfficialDriveAssetOnce(body);
+  } catch (error) {
+    if (!(error instanceof DriveImportRetryRequiredError)) throw error;
+    // A fresh session means a fresh opaque receipt.  This is deliberately one
+    // bounded retry, only for the direct Drive route, and never reuses a
+    // consumed receipt or relaxes its validation.
+    return await importOfficialDriveAssetOnce(body);
+  }
 }
 
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
