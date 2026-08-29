@@ -408,6 +408,11 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   const conversationId = conversationIdOf(body);
   const message = externalMessageOf(body.message);
   const runtime = await runtimeFor(projectId);
+  // A server-side turn is short-lived unless it produced a real proposal.
+  // Keeping an idle runtime here would retain an old ownership/revision after
+  // the browser is opened and closed, making the next Telegram turn stale.
+  let retainRuntime = runtime.currentSessionInfo()?.status === 'awaiting_review';
+  try {
   const snapshot = await loadOfflineStoredProject(projectId);
   if (!snapshot) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
   const history = await conversationFor(projectId, conversationId);
@@ -450,6 +455,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   await executeRun(run, execution);
   const text = runMessage(run);
   const session = await finalizeDraftedAgentTurn(runtime, text);
+  retainRuntime = session?.status === 'awaiting_review';
   const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
   if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
   return {
@@ -467,6 +473,12 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
     conversationId,
     engine: 'openchatcut',
   };
+  } finally {
+    if (!retainRuntime && runtimeByProject.get(projectId) === runtime) {
+      runtimeByProject.delete(projectId);
+      await runtime.dispose().catch(() => undefined);
+    }
+  }
 }
 
 export interface PendingProposalRuntime {
@@ -489,11 +501,31 @@ export async function recoverPendingProposalRuntime<T extends PendingProposalRun
 }
 
 async function pendingRuntimeFor(projectId: string): Promise<OfflineExternalEditRuntime> {
-  const runtime = await runtimeFor(projectId);
+  let runtime = await runtimeFor(projectId);
   try {
+    // Revalidate the cached ownership before attempting approval. Opening and
+    // closing the browser may have replaced or expired the old claim.
+    await runtime.validateAvailability();
     return await recoverPendingProposalRuntime(runtime);
   } catch (error) {
+    if (!isStaleOfflineRevision(error)) {
+      const current = runtime.currentSessionInfo();
+      const editSessionId = typeof current?.editSessionId === 'string' ? current.editSessionId : '';
+      if (editSessionId) await runtime.execute('discard_edit_session', { editSessionId }).catch(() => undefined);
+      runtimeByProject.delete(projectId);
+      await runtime.dispose();
+      throw error;
+    }
     const current = runtime.currentSessionInfo();
+    // Do not discard the durable proposal. Release only this stale in-memory
+    // connection, then load the same proposal with a fresh ownership claim.
+    if (current?.status === 'awaiting_review') {
+      runtimeByProject.delete(projectId);
+      await runtime.dispose();
+      runtime = await runtimeFor(projectId);
+      await runtime.validateAvailability();
+      return await recoverPendingProposalRuntime(runtime);
+    }
     const editSessionId = typeof current?.editSessionId === 'string' ? current.editSessionId : '';
     if (editSessionId) await runtime.execute('discard_edit_session', { editSessionId }).catch(() => undefined);
     runtimeByProject.delete(projectId);
