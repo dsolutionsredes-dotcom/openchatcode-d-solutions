@@ -6,6 +6,7 @@ import {
   conversationKeyFor,
   ensureExternalProjectWith,
   externalMessageOf,
+  messageRunOutcome,
   normalizeExternalResponse,
   recoverPendingProposalRuntime,
   saveConversation,
@@ -56,6 +57,27 @@ assert.equal(normalizeExternalResponse({ projectId: 'official-project-3' }, crea
 assert.throws(() => externalMessageOf('  '), /message is required/);
 const literalMessage = '  Hazlo más corto.  ';
 assert.equal(externalMessageOf(literalMessage), literalMessage, 'message reaches OpenChatCut byte-for-byte as supplied');
+
+const emptyTerminal = messageRunOutcome(null, 'completed', '');
+assert.deepEqual(emptyTerminal, {
+  ok: false,
+  status: 'failed',
+  action: 'agent_turn',
+  message: 'OpenChatCut did not return a visible response.',
+  requiresUserInput: false,
+  errorCode: 'agent_run_failed',
+}, 'an empty terminal agent turn is failed, never a successful read');
+const pendingProposal = messageRunOutcome({ status: 'awaiting_review', editSessionId: 'edit-1' }, 'completed', '');
+assert.equal(pendingProposal.ok, true);
+assert.equal(pendingProposal.status, 'pending_approval');
+assert.equal(pendingProposal.action, 'agent_turn');
+assert.equal(pendingProposal.requiresUserInput, true);
+assert.equal(pendingProposal.message, 'OpenChatCut creó una propuesta pendiente. Responde aprobando o rechazando en texto libre.');
+
+const appliedProposal = messageRunOutcome({ status: 'applied' }, 'completed', 'OpenChatCut applied the approved proposal.');
+assert.equal(appliedProposal.ok, true);
+assert.equal(appliedProposal.status, 'applied');
+assert.equal(appliedProposal.action, 'agent_turn');
 
 const contractCases = [
   { body: { projectId: 'p' }, value: { ok: true, renderId: 'r1' }, action: 'render', status: 'queued', field: 'renderId' },

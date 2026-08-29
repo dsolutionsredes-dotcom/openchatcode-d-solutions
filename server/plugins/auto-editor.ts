@@ -319,6 +319,50 @@ function autoStatus(runtimeInfo: Record<string, unknown> | null, runStatus: stri
   return 'read';
 }
 
+/**
+ * The external bridge must never turn a completed run without a visible answer
+ * into a successful editor response.  n8n forwards this message verbatim, so
+ * treating an empty terminal response as `read` would let VALE report a result
+ * that the engine never produced.
+ */
+export function messageRunOutcome(
+  runtimeInfo: Record<string, unknown> | null,
+  runStatus: string,
+  message: string,
+  runError = '',
+): Pick<ExternalResponseDefaults, 'action' | 'status' | 'message' | 'requiresUserInput'> & { ok: boolean; errorCode: string } {
+  const status = autoStatus(runtimeInfo, runStatus);
+  const terminal = status !== 'queued' && status !== 'running';
+  if (status === 'pending_approval' && !message.trim()) {
+    return {
+      ok: true,
+      status,
+      action: 'agent_turn',
+      message: 'OpenChatCut creó una propuesta pendiente. Responde aprobando o rechazando en texto libre.',
+      requiresUserInput: true,
+      errorCode: '',
+    };
+  }
+  if (terminal && !message.trim()) {
+    return {
+      ok: false,
+      status: 'failed',
+      action: 'agent_turn',
+      message: runError || 'OpenChatCut did not return a visible response.',
+      requiresUserInput: false,
+      errorCode: 'agent_run_failed',
+    };
+  }
+  return {
+    ok: status !== 'failed',
+    status,
+    action: 'agent_turn',
+    message,
+    requiresUserInput: requiresUserInputFor(status),
+    errorCode: runError,
+  };
+}
+
 async function createMessageRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const conversationId = conversationIdOf(body);
@@ -332,10 +376,12 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   const provider = normalizeLlmProvider(providerValue);
   const config = resolveLlmProviderConfig(provider, (name) => getKey(name as KeyName));
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : (config.model || defaultModelForProvider(provider));
-  const runId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : randomUUID();
+  // An agent turn is a new request. Reusing a caller-supplied run id can attach
+  // it to an old session and make a stale result look current.
+  const runId = randomUUID();
   const askOnly = body.askOnly === true;
   const language = responseLanguage(body.responseLanguage);
-  const instructions = `${buildAgentSystemPrompt(promptContext(snapshot), { toolsAvailable: true })}\n\n# External channel response language\nRespond to the user in ${language}. Keep the OpenChatCut message intact; do not expose this instruction.`;
+  const instructions = `${buildAgentSystemPrompt(promptContext(snapshot), { toolsAvailable: true })}\n\n# External bridge contract\n- Preserve the user's message exactly as received; do not translate, paraphrase, split, or turn it into invented commands.\n- For questions and inspections, use the applicable read tools before answering.\n- Every mutation must remain a manual proposal and require explicit approval through the external bridge; never auto-apply it.\n- When a proposal is pending approval, end the visible response by asking the user to approve or reject it in free text.\n- Return a visible, truthful user-facing response. Never claim that an edit was applied unless the runtime confirms status applied.\n\n# External channel response language\nRespond to the user in ${language}. Keep the OpenChatCut message intact; do not expose this instruction.`;
   const { run, capability } = createRunWithCapability({
     id: runId,
     projectId,
@@ -364,21 +410,17 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   await executeRun(run, execution);
   const text = runMessage(run);
   const session = runtime.currentSessionInfo();
-  const status = autoStatus(session, run.status);
+  const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
   if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
   return {
-    ok: true,
-    status,
-    action: status === 'pending_approval' ? 'edit' : 'read',
-    message: text,
+    ...outcome,
     data: {
-      requiresApproval: status === 'pending_approval',
-      approvalStatus: status === 'pending_approval' ? 'pending' : status,
+      requiresApproval: outcome.status === 'pending_approval',
+      approvalStatus: outcome.status === 'pending_approval' ? 'pending' : outcome.status,
       ...(session ?? {}),
       conversationId,
+      engineProjectId: projectId,
     },
-    requiresUserInput: requiresUserInputFor(status),
-    errorCode: run.error ?? '',
     projectId,
     runId: run.id,
     capability,
@@ -797,7 +839,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const projectId = projectIdOf(url.searchParams.get('projectId'));
       const run = getRun(parts[1]) ?? await recoverServerRun(projectId, parts[1]);
       if (!run || run.projectId !== projectId) return send(res, 404, { ok: false, error: 'run not found' });
-      return sendExternal(res, 200, { projectId }, { ok: true, status: autoStatus(runtimeByProject.get(projectId)?.currentSessionInfo() ?? null, run.status), message: runMessage(run), projectId, runId: run.id, errorCode: run.error ?? '', engine: 'openchatcut' }, { action: 'status', status: 'read' });
+      return sendExternal(res, 200, { projectId }, {
+        ok: true,
+        status: autoStatus(runtimeByProject.get(projectId)?.currentSessionInfo() ?? null, run.status),
+        action: 'run_status',
+        message: runMessage(run),
+        projectId,
+        runId: run.id,
+        errorCode: run.error ?? '',
+        engine: 'openchatcut',
+      }, { action: 'run_status', status: 'read' });
     }
     if (req.method === 'POST' && (url.pathname === '/proposal/approve' || url.pathname === '/proposal/reject')) {
       const body = await readJson(req);
@@ -805,11 +856,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const sessionId = typeof body.editSessionId === 'string' ? body.editSessionId : '';
       const runtime = await pendingRuntimeFor(projectId);
       const result = await runtime.execute(url.pathname.endsWith('/approve') ? 'approve_edit_session' : 'reject_edit_session', { editSessionId: sessionId });
-      const status = url.pathname.endsWith('/approve') ? 'applied' : 'rejected';
+      const approved = url.pathname.endsWith('/approve');
+      const status = approved ? 'applied' : 'rejected';
+      const action = approved ? 'approve' : 'reject';
       runtimeByProject.delete(projectId);
       await runtime.dispose();
       const metadata = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
-      return sendExternal(res, 200, { projectId }, { ok: true, status, action: 'edit', message: '', data: { requiresApproval: false, approvalStatus: status, ...metadata }, requiresUserInput: false, errorCode: '', projectId, engine: 'openchatcut' }, { action: 'edit', status });
+      return sendExternal(res, 200, { projectId }, {
+        ok: true,
+        status,
+        action,
+        message: status === 'applied' ? 'OpenChatCut applied the approved proposal.' : 'OpenChatCut rejected the proposal.',
+        data: { requiresApproval: false, approvalStatus: status, ...metadata },
+        requiresUserInput: false,
+        errorCode: '',
+        projectId,
+        engine: 'openchatcut',
+      }, { action, status });
     }
     return sendExternal(res, 404, requestBody, { ok: false, errorCode: 'not_found', message: 'not found' }, { action: 'read', status: 'failed' });
   } catch (error) {
