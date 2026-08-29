@@ -6,6 +6,7 @@ import {
   conversationKeyFor,
   ensureExternalProjectWith,
   externalMessageOf,
+  finalizeDraftedAgentTurn,
   messageRunOutcome,
   normalizeExternalResponse,
   recordProposalResolution,
@@ -80,6 +81,22 @@ assert.equal(pendingProposal.status, 'pending_approval');
 assert.equal(pendingProposal.action, 'agent_turn');
 assert.equal(pendingProposal.requiresUserInput, true);
 assert.equal(pendingProposal.message, 'OpenChatCut creó una propuesta pendiente. Responde aprobando o rechazando en texto libre.');
+
+let draftSession: Record<string, unknown> | null = {
+  status: 'drafting', operationCount: 1, editSessionId: 'draft-1',
+};
+const draftCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+const finalizedDraft = await finalizeDraftedAgentTurn({
+  currentSessionInfo: () => draftSession,
+  execute: async (name, args) => {
+    draftCalls.push({ name, args });
+    draftSession = { status: 'awaiting_review', operationCount: 1, editSessionId: 'draft-1' };
+    return draftSession;
+  },
+}, 'Renombrar el archivo de prueba.');
+assert.equal(draftCalls[0]?.name, 'review_edit_session');
+assert.equal(draftCalls[0]?.args.editSessionId, 'draft-1');
+assert.equal(finalizedDraft?.status, 'awaiting_review');
 
 const appliedProposal = messageRunOutcome({ status: 'applied' }, 'completed', 'OpenChatCut applied the approved proposal.');
 assert.equal(appliedProposal.ok, true);

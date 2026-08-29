@@ -380,6 +380,29 @@ export function messageRunOutcome(
   };
 }
 
+/**
+ * A model may finish its turn after making changes but before explicitly
+ * calling review_edit_session.  That leaves a drafting session locked and the
+ * next request cannot proceed.  At the end of a server-side turn, turn such a
+ * completed draft into the manual proposal required by the external contract.
+ */
+export async function finalizeDraftedAgentTurn(
+  runtime: Pick<OfflineExternalEditRuntime, 'currentSessionInfo' | 'execute'>,
+  summary: string,
+): Promise<Record<string, unknown> | null> {
+  const current = runtime.currentSessionInfo();
+  if (!current || current.status !== 'drafting' || Number(current.operationCount ?? 0) < 1) {
+    return current;
+  }
+  const editSessionId = typeof current.editSessionId === 'string' ? current.editSessionId : '';
+  if (!editSessionId) return current;
+  await runtime.execute('review_edit_session', {
+    editSessionId,
+    summary: summary.trim() || 'Cambios preparados por OpenChatCut para revisión.',
+  });
+  return runtime.currentSessionInfo();
+}
+
 async function createMessageRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const conversationId = conversationIdOf(body);
@@ -426,7 +449,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   };
   await executeRun(run, execution);
   const text = runMessage(run);
-  const session = runtime.currentSessionInfo();
+  const session = await finalizeDraftedAgentTurn(runtime, text);
   const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
   if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
   return {
