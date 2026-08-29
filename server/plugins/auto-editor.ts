@@ -5,7 +5,10 @@ import type { ModelMessage } from 'ai';
 import { buildAgentSystemPrompt } from '../../src/agent/systemPrompt.ts';
 import type { AgentContext } from '../../src/agent/context.ts';
 import { makeDraft } from '../../src/editor/store.ts';
+import { execFinalizeUpload } from '../../src/agent/tools/upload-finalize.ts';
 import { loadOfflineStoredProject, type OfflineStoredProject } from '../external-agent/offline-project-store.ts';
+import { claimOfflineProjectOwnership, releaseProjectEditOwnership, renewProjectEditOwnership } from '../external-agent/project-edit-ownership.ts';
+import { commitOfflineStoredProject } from '../external-agent/offline-project-store.ts';
 import { OfflineExternalEditRuntime } from '../external-agent/offline-runtime.ts';
 import { offlineExternalToolSchemas } from '../external-agent/offline-tools.ts';
 import { activateOfflineAgentRuntimeBackend } from '../external-agent/agent-runtime-persistence.ts';
@@ -23,6 +26,8 @@ import { mintImportUpload } from '../external-agent/import-token.ts';
 import { createExternalProject, deleteExternalProjectWithMedia, listExternalProjects, renameExternalProject } from '../external-agent/projects.ts';
 import { externalUploadMediaType } from '../../src/media/uploadMediaType.ts';
 import { googleDriveFileMetadata, googleDriveFileStream } from '../google-drive-service-account.ts';
+import { normalizeUploadedMedia } from './normalize-media.ts';
+import { processUploadReceiptAction } from '../external-agent/upload-receipt-action.ts';
 
 const CONVERSATION_LIMIT = 32;
 export function conversationKeyFor(projectId: string, conversationId = 'default'): string {
@@ -30,12 +35,7 @@ export function conversationKeyFor(projectId: string, conversationId = 'default'
 }
 const runtimeByProject = new Map<string, OfflineExternalEditRuntime>();
 
-/**
- * `finalize_uploaded_asset` commits its opaque receipt before the offline
- * review commits the project draft.  If that later review loses the project
- * revision, this marks the only safe recovery: create a new upload receipt
- * and transfer the Drive source again.  Reusing the old receipt is forbidden.
- */
+/** A one-shot upload receipt must never be retried through the edit runtime. */
 class DriveImportRetryRequiredError extends Error {
   constructor() {
     super('The project revision changed after the upload receipt was finalized.');
@@ -548,7 +548,69 @@ function isStaleOfflineRevision(error: unknown): boolean {
   return error instanceof Error && error.message.includes('changed ownership or revision during the offline edit');
 }
 
-async function importOfficialDriveAssetOnce(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function finalizeDriveReceiptIntoCurrentProject(
+  projectId: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  // Drive import is not an editor instruction.  Claim the project only for
+  // this short final registration, after the long file transfer has finished.
+  const claimed = await claimOfflineProjectOwnership(projectId, randomUUID());
+  if (claimed.status !== 'claimed') {
+    throw new Error(claimed.status === 'busy'
+      ? 'El proyecto está siendo editado en este momento; vuelve a intentar cuando termine esa edición.'
+      : 'OpenChatCut no pudo reservar el proyecto para registrar el archivo.');
+  }
+  const draft = makeDraft(claimed.doc);
+  const context: AgentContext = {
+    commands: draft.commands,
+    getState: draft.getState,
+    getDoc: draft.getDoc,
+    getCreativeMode: () => null,
+    templates: [],
+    audio: [],
+    getProjectId: () => projectId,
+  };
+  try {
+    const finalized = await execFinalizeUpload(body, context, {
+      normalizeUploadedVideo: normalizeUploadedMedia,
+      postReceiptAction: async (receiptBody) => {
+        const result = processUploadReceiptAction(receiptBody);
+        return new Response(JSON.stringify(result.body), {
+          status: result.status,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    if (!finalized || typeof finalized !== 'object' || Array.isArray(finalized)) {
+      throw new Error('OpenChatCut no pudo finalizar el archivo recibido desde Drive.');
+    }
+    if ('error' in finalized) throw new Error(String(finalized.error));
+    const renewed = await renewProjectEditOwnership(claimed.claim);
+    if (renewed.status !== 'renewed') {
+      throw new Error('El proyecto cambió mientras se preparaba el archivo; no se volvió a transferir el video.');
+    }
+    const committed = await commitOfflineStoredProject({
+      projectId,
+      expectedRevision: claimed.revision,
+      doc: draft.getDoc(),
+      ownership: renewed.claim,
+      canCommit: () => true,
+    });
+    if (committed.status !== 'applied') {
+      throw new Error('El proyecto cambió mientras se registraba el archivo; no se volvió a transferir el video.');
+    }
+    return {
+      ...(finalized as Record<string, unknown>),
+      projectId,
+      review: { status: 'applied', automaticVersionCreated: committed.automaticVersionCreated === true },
+      engine: 'openchatcut-official-import',
+    };
+  } finally {
+    await releaseProjectEditOwnership(claimed.claim).catch(() => undefined);
+  }
+}
+
+async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const assetType = typeof body.assetType === 'string' ? body.assetType.trim() : '';
   const driveId = typeof body.driveId === 'string' ? body.driveId.trim() : '';
@@ -595,20 +657,8 @@ async function importOfficialDriveAssetOnce(body: Record<string, unknown>): Prom
     }
     finalizeBody.durationInSeconds = durationInSeconds;
   }
-  const finalized = await finalizeOfficialImport(finalizeBody);
+  const finalized = await finalizeDriveReceiptIntoCurrentProject(projectId, finalizeBody);
   return { ...finalized, driveId: metadata.id, filename: metadata.name, contentType: metadata.mimeType, size: metadata.size };
-}
-
-async function importOfficialDriveAsset(body: Record<string, unknown>): Promise<Record<string, unknown>> {
-  try {
-    return await importOfficialDriveAssetOnce(body);
-  } catch (error) {
-    if (!(error instanceof DriveImportRetryRequiredError)) throw error;
-    // A fresh session means a fresh opaque receipt.  This is deliberately one
-    // bounded retry, only for the direct Drive route, and never reuses a
-    // consumed receipt or relaxes its validation.
-    return await importOfficialDriveAssetOnce(body);
-  }
 }
 
 async function finalizeOfficialImport(body: Record<string, unknown>): Promise<Record<string, unknown>> {
