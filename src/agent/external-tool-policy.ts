@@ -18,6 +18,7 @@ const DRAFT_EDIT_TOOL_NAMES = new Set([
   'edit_item', 'manage_effects', 'edit_captions', 'update_watermark', 'transcribe_track',
   'manage_markers', 'apply_caption_avoidance', 'place_graphics_in_safe_zone', 'auto_reframe',
   'manage_design_style',
+  'manage_media_pool',
 ]);
 
 const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
@@ -48,6 +49,7 @@ const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
   edit_captions: true,
   update_watermark: true,
   manage_markers: true,
+  manage_media_pool: true,
   finalize_uploaded_asset: true,
 };
 

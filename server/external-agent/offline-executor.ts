@@ -20,6 +20,7 @@ import { execWatermarkTool } from '../../src/agent/tools/watermark-tools.js';
 import { execFinalizeUpload } from '../../src/agent/tools/upload-finalize.js';
 import { execLibraryTool } from '../../src/agent/tools/library-tools.js';
 import { execEditItemTool } from '../../src/agent/tools/edit-item-tools.js';
+import { execMediaPoolTool } from '../../src/agent/tools/media-pool-tools.js';
 import { normalizeUploadedMedia } from '../plugins/normalize-media.ts';
 import { processUploadReceiptAction } from './upload-receipt-action.ts';
 
@@ -103,5 +104,6 @@ export async function executeOfflineTool(
   if (name === 'transcribe_track') return execHeadlessTranscription(args, ctx);
   if (name === 'browse_library') return execLibraryTool(name, args, ctx);
   if (name === 'edit_item') return execEditItemTool(name, args, ctx);
+  if (name === 'manage_media_pool') return execMediaPoolTool(name, args, ctx);
   return { error: `offline tool ${name} is not implemented` };
 }

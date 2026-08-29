@@ -17,6 +17,7 @@ import { WATERMARK_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/watermark-
 import { UPLOAD_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/upload-tools.js';
 import { LIBRARY_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/library-tools.js';
 import { EDIT_ITEM_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/edit-item-tools.js';
+import { MEDIA_POOL_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/media-pool-tools.js';
 
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   begin_edit_session: 'Start an offline server draft. Manual mode creates a durable pending proposal; auto mode applies at review.',
@@ -43,6 +44,7 @@ const OFFLINE_SCHEMA_GROUPS = [
   UPLOAD_TOOL_SCHEMAS,
   LIBRARY_TOOL_SCHEMAS,
   EDIT_ITEM_TOOL_SCHEMAS,
+  MEDIA_POOL_TOOL_SCHEMAS,
 ] as const;
 
 function serverDirectSchemas(): ExternalRegisteredTool[] {
