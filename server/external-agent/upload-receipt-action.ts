@@ -14,6 +14,9 @@ export function processUploadReceiptAction(body: Record<string, unknown>): Uploa
   if (body.action === 'claim') {
     const claimed = claimUploadReceipt(body.receipt, body.projectId, body.claimId);
     if (claimed.status !== 'accepted') {
+      // Do not log the receipt, project id, or claim id: they are credentials.
+      // The state is enough to diagnose a failed server-side import safely.
+      console.warn(`[upload-receipt] claim rejected: ${claimed.status}`);
       return {
         status: 409,
         body: {
