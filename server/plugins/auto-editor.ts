@@ -570,6 +570,28 @@ async function finalizeDriveReceiptIntoCurrentProject(
     audio: [],
     getProjectId: () => projectId,
   };
+  // Video normalization can take longer than the normal 90-second ownership
+  // lease. Keep this short-lived import reservation alive while the receipt is
+  // finalized, rather than extending the lease globally or letting another
+  // writer replace the project beneath this import.
+  let activeClaim = claimed.claim;
+  let heartbeatStopped = false;
+  let heartbeatFailure: Error | null = null;
+  let renewalChain: Promise<void> = Promise.resolve();
+  const renewOwnership = () => {
+    renewalChain = renewalChain.then(async () => {
+      if (heartbeatStopped || heartbeatFailure) return;
+      const renewed = await renewProjectEditOwnership(activeClaim);
+      if (renewed.status !== 'renewed') {
+        heartbeatFailure = new Error('El proyecto cambió mientras se preparaba el archivo; no se volvió a transferir el video.');
+        return;
+      }
+      activeClaim = renewed.claim;
+    }).catch((error) => {
+      heartbeatFailure = error instanceof Error ? error : new Error(String(error));
+    });
+  };
+  const ownershipHeartbeat = setInterval(renewOwnership, 30_000);
   try {
     const finalized = await execFinalizeUpload(body, context, {
       normalizeUploadedVideo: normalizeUploadedMedia,
@@ -585,7 +607,11 @@ async function finalizeDriveReceiptIntoCurrentProject(
       throw new Error('OpenChatCut no pudo finalizar el archivo recibido desde Drive.');
     }
     if ('error' in finalized) throw new Error(String(finalized.error));
-    const renewed = await renewProjectEditOwnership(claimed.claim);
+    heartbeatStopped = true;
+    clearInterval(ownershipHeartbeat);
+    await renewalChain;
+    if (heartbeatFailure) throw heartbeatFailure;
+    const renewed = await renewProjectEditOwnership(activeClaim);
     if (renewed.status !== 'renewed') {
       throw new Error('El proyecto cambió mientras se preparaba el archivo; no se volvió a transferir el video.');
     }
@@ -606,7 +632,10 @@ async function finalizeDriveReceiptIntoCurrentProject(
       engine: 'openchatcut-official-import',
     };
   } finally {
-    await releaseProjectEditOwnership(claimed.claim).catch(() => undefined);
+    heartbeatStopped = true;
+    clearInterval(ownershipHeartbeat);
+    await renewalChain.catch(() => undefined);
+    await releaseProjectEditOwnership(activeClaim).catch(() => undefined);
   }
 }
 
