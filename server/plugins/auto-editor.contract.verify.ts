@@ -8,6 +8,7 @@ import {
   externalMessageOf,
   messageRunOutcome,
   normalizeExternalResponse,
+  recordProposalResolution,
   recoverPendingProposalRuntime,
   saveConversation,
 } from './auto-editor.ts';
@@ -27,6 +28,12 @@ assert.notEqual(conversationKeyFor(projectId, 'chat-alpha'), conversationKeyFor(
 assert.deepEqual(await conversationFor(projectId, 'chat-alpha'), alpha);
 assert.deepEqual(await conversationFor(projectId, 'chat-beta'), beta);
 assert.deepEqual(await conversationFor(projectId, 'chat-missing'), []);
+await recordProposalResolution(projectId, 'chat-alpha', 'applied');
+assert.match(
+  String((await conversationFor(projectId, 'chat-alpha')).at(-1)?.content),
+  /propuesta anterior fue aprobada y aplicada/,
+  'approval resolution is appended to the same conversation',
+);
 
 let createCalls = 0;
 const existingProject = { id: 'official-project-1', name: 'Vale project', updatedAt: 1 };

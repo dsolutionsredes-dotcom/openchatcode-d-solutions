@@ -264,6 +264,23 @@ export async function saveConversation(projectId: string, conversationId: string
   await kvSet(conversationKeyFor(projectId, conversationId), messages.slice(-CONVERSATION_LIMIT));
 }
 
+/**
+ * Approval and rejection arrive through a separate endpoint from the agent
+ * turn.  Record that terminal event in the same conversation so a later turn
+ * cannot mistake the old proposal text in its history for an active proposal.
+ */
+export async function recordProposalResolution(
+  projectId: string,
+  conversationId: string,
+  status: 'applied' | 'rejected',
+): Promise<void> {
+  const history = await conversationFor(projectId, conversationId);
+  const content = status === 'applied'
+    ? 'OpenChatCut: la propuesta anterior fue aprobada y aplicada. Puedes continuar con la siguiente solicitud.'
+    : 'OpenChatCut: la propuesta anterior fue rechazada. Puedes continuar con la siguiente solicitud.';
+  await saveConversation(projectId, conversationId, [...history, { role: 'assistant', content }]);
+}
+
 function promptContext(snapshot: OfflineStoredProject): AgentContext {
   const draft = makeDraft(snapshot.doc);
   return {
@@ -853,6 +870,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (req.method === 'POST' && (url.pathname === '/proposal/approve' || url.pathname === '/proposal/reject')) {
       const body = await readJson(req);
       const projectId = projectIdOf(body.projectId);
+      const conversationId = conversationIdOf(body);
       const sessionId = typeof body.editSessionId === 'string' ? body.editSessionId : '';
       const runtime = await pendingRuntimeFor(projectId);
       const result = await runtime.execute(url.pathname.endsWith('/approve') ? 'approve_edit_session' : 'reject_edit_session', { editSessionId: sessionId });
@@ -861,6 +879,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const action = approved ? 'approve' : 'reject';
       runtimeByProject.delete(projectId);
       await runtime.dispose();
+      await recordProposalResolution(projectId, conversationId, status).catch((error: unknown) =>
+        process.emitWarning(`OpenChatCut could not record the proposal resolution in conversation history: ${
+          error instanceof Error ? error.message : String(error)}`));
       const metadata = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
       return sendExternal(res, 200, { projectId }, {
         ok: true,
