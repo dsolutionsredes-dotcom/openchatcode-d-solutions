@@ -508,10 +508,19 @@ async function finalizeOfficialImportWithRuntime(
     ? String((started as Record<string, unknown>).editSessionId)
     : '';
   if (!editSessionId) throw new Error('official import session did not return an edit session id');
-  const finalized = await runtime.execute('finalize_uploaded_asset', {
-    ...body,
-    editSessionId,
-  });
+  let finalized: unknown;
+  try {
+    finalized = await runtime.execute('finalize_uploaded_asset', {
+      ...body,
+      editSessionId,
+    });
+  } catch (error) {
+    // The tool commits the receipt before the runtime validates its project
+    // ownership. A stale result here therefore cannot be retried with that
+    // same receipt; the Drive caller must mint a new one and transfer again.
+    if (isStaleOfflineRevision(error)) throw new DriveImportRetryRequiredError();
+    throw error;
+  }
   if (finalized && typeof finalized === 'object' && 'error' in finalized) {
     throw new Error(String((finalized as Record<string, unknown>).error));
   }
