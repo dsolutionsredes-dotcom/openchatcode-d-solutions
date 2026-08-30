@@ -18,6 +18,10 @@ import type {
 
 export class TranscriptionConfigurationError extends Error {}
 
+const ASSEMBLYAI_BASE_URL = 'https://api.assemblyai.com/v2';
+const ASSEMBLYAI_POLL_INTERVAL_MS = 2500;
+const ASSEMBLYAI_DEADLINE_MS = 30 * 60 * 1000;
+
 function requireProviderKey(options: TranscriptionOptions, provider: CloudTranscriptionProvider): string {
   if (provider === 'cartesia' && /^ink-2(?:-|$)/i.test(options.cartesiaModel)) {
     throw new TranscriptionConfigurationError(
@@ -40,6 +44,62 @@ export function assertTranscriptionProviderConfigured(
   provider: CloudTranscriptionProvider,
 ): void {
   requireProviderKey(options, provider);
+}
+
+/** Server-side AssemblyAI path used by headless/external agent runs. */
+export async function transcribeAssemblyAiAudio(
+  options: TranscriptionOptions,
+  request: Omit<CloudTranscriptionRequest, 'provider'>,
+): Promise<NormalizedTranscriptResult> {
+  const key = options.assemblyAiApiKey;
+  if (!key) throw new TranscriptionConfigurationError('AssemblyAI API key is not configured');
+  const headers = { authorization: key };
+  const upload = await fetch(`${ASSEMBLYAI_BASE_URL}/upload`, {
+    method: 'POST', headers, body: Buffer.from(request.audio),
+  });
+  if (!upload.ok) throw new Error(`AssemblyAI upload failed: HTTP ${upload.status}`);
+  const uploadBody = await upload.json() as { upload_url?: unknown };
+  if (typeof uploadBody.upload_url !== 'string' || !uploadBody.upload_url) {
+    throw new Error('AssemblyAI upload returned no upload URL');
+  }
+  const create = await fetch(`${ASSEMBLYAI_BASE_URL}/transcript`, {
+    method: 'POST',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      audio_url: uploadBody.upload_url,
+      speaker_labels: request.diarize,
+      punctuate: true,
+      format_text: true,
+      ...(request.language === 'auto'
+        ? { language_detection: true }
+        : { language_code: request.language }),
+    }),
+  });
+  if (!create.ok) throw new Error(`AssemblyAI transcript creation failed: HTTP ${create.status}`);
+  const createBody = await create.json() as { id?: unknown; error?: unknown };
+  if (typeof createBody.error === 'string' && createBody.error) throw new Error(createBody.error);
+  if (typeof createBody.id !== 'string' || !createBody.id) throw new Error('AssemblyAI transcript returned no id');
+
+  const deadline = Date.now() + ASSEMBLYAI_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    const poll = await fetch(`${ASSEMBLYAI_BASE_URL}/transcript/${createBody.id}`, { headers });
+    if (!poll.ok) throw new Error(`AssemblyAI transcript polling failed: HTTP ${poll.status}`);
+    const data = await poll.json() as {
+      status?: unknown; error?: unknown; text?: unknown;
+      words?: Array<{ text?: unknown; start?: unknown; end?: unknown; speaker?: unknown }>;
+    };
+    if (data.status === 'completed') {
+      const words: NormalizedTranscriptWord[] = (data.words ?? []).flatMap((word) => {
+        if (typeof word.text !== 'string' || typeof word.start !== 'number' || typeof word.end !== 'number') return [];
+        return [{ text: word.text.trim(), start: Math.max(0, Math.round(word.start)), end: Math.max(0, Math.round(word.end)),
+          speaker: typeof word.speaker === 'string' ? word.speaker : null }];
+      }).filter((word) => word.text.length > 0);
+      return { text: typeof data.text === 'string' ? data.text : joinedText(words), words, utterances: groupUtterances(words) };
+    }
+    if (data.status === 'error') throw new Error(typeof data.error === 'string' ? data.error : 'AssemblyAI transcription failed');
+    await new Promise<void>((resolve) => setTimeout(resolve, ASSEMBLYAI_POLL_INTERVAL_MS));
+  }
+  throw new Error('AssemblyAI transcription timed out while waiting for the provider');
 }
 
 async function runProvider(options: TranscriptionOptions, request: CloudTranscriptionRequest) {

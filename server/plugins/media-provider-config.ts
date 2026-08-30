@@ -25,6 +25,7 @@ export function aiVoiceOptions(): AiVoiceOptions {
 
 export function transcriptionOptions(): TranscriptionOptions {
   return {
+    get assemblyAiApiKey() { return getKey('ASSEMBLYAI_API_KEY'); },
     get openaiBaseUrl() { return getKey('IMAGE_BASE_URL') || 'https://api.openai.com'; },
     get openaiApiKey() { return getKey('OPENAI_API_KEY'); },
     get openaiModel() { return getKey('OPENAI_TRANSCRIPTION_MODEL') || 'gpt-4o-mini-transcribe'; },

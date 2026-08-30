@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { resolveUploadFile } from '../media-dir.ts';
 import { transcriptionOptions } from '../plugins/media-provider-config.ts';
-import { transcribeCloudAudio } from '../plugins/transcription-providers.ts';
+import { transcribeAssemblyAiAudio, transcribeCloudAudio } from '../plugins/transcription-providers.ts';
 import { getKey } from '../keystore.ts';
 import { defaultTrackId, resolveTrackId, trackAlias } from '../../src/editor/types.js';
 import { execAgentRuntimeTool } from '../../src/agent/tools/agent-runtime-tools.js';
@@ -26,7 +26,7 @@ import { processUploadReceiptAction } from './upload-receipt-action.ts';
 
 type Args = Record<string, unknown>;
 
-const CLOUD_PROVIDERS = new Set(['openai', 'mistral', 'deepgram', 'groq', 'elevenlabs', 'cartesia']);
+const CLOUD_PROVIDERS = new Set(['assemblyai', 'openai', 'mistral', 'deepgram', 'groq', 'elevenlabs', 'cartesia']);
 
 async function execHeadlessTranscription(args: Args, ctx: AgentContext): Promise<unknown> {
   const state = ctx.getState();
@@ -34,7 +34,7 @@ async function execHeadlessTranscription(args: Args, ctx: AgentContext): Promise
   if (!track) return { error: 'no track available; create one with edit_track first' };
   const provider = typeof args.provider === 'string' && args.provider.trim()
     ? args.provider.trim()
-    : getKey('PREFERRED_TRANSCRIPTION_PROVIDER');
+    : getKey('PREFERRED_TRANSCRIPTION_PROVIDER') || 'assemblyai';
   if (provider && !CLOUD_PROVIDERS.has(provider)) {
     return { error: `headless transcription requires a configured cloud provider; unsupported provider: ${provider}` };
   }
@@ -53,12 +53,14 @@ async function execHeadlessTranscription(args: Args, ctx: AgentContext): Promise
     if (!file) return { error: `media file is not available for ${item.id}: ${filename}`, partial: results };
     const audio = await readFile(file);
     const options = transcriptionOptions();
-    const transcript = await transcribeCloudAudio(options, {
-      provider: (provider || 'openai') as 'openai' | 'mistral' | 'deepgram' | 'groq' | 'elevenlabs' | 'cartesia',
-      language: options.language,
-      diarize: options.diarization,
-      audio,
-    });
+    const transcript = provider === 'assemblyai'
+      ? await transcribeAssemblyAiAudio(options, { language: options.language, diarize: options.diarization, audio })
+      : await transcribeCloudAudio(options, {
+        provider: (provider || 'openai') as 'openai' | 'mistral' | 'deepgram' | 'groq' | 'elevenlabs' | 'cartesia',
+        language: options.language,
+        diarize: options.diarization,
+        audio,
+      });
     ctx.commands.setItemTranscript(item.id, transcript.words);
     results.push({ itemId: item.id, words: transcript.words.length, text: transcript.text.slice(0, 200) });
   }

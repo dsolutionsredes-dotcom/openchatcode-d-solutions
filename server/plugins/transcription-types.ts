@@ -10,6 +10,7 @@ export const CLOUD_TRANSCRIPTION_PROVIDERS = [
 export type CloudTranscriptionProvider = (typeof CLOUD_TRANSCRIPTION_PROVIDERS)[number];
 
 export interface TranscriptionOptions {
+  assemblyAiApiKey: string;
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;
