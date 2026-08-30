@@ -506,6 +506,12 @@ export async function recoverPendingProposalRuntime<T extends PendingProposalRun
 
 async function pendingRuntimeFor(projectId: string): Promise<OfflineExternalEditRuntime> {
   let runtime = await runtimeFor(projectId);
+  // validateAvailability() marks active sessions stale when the 90-second
+  // ownership lease has expired. Keep the durable proposal identity before
+  // that validation so an approval arriving later can recover it instead of
+  // losing the only in-memory reference and returning a misleading stale
+  // revision error.
+  const pendingBeforeValidation = runtime.currentSessionInfo();
   try {
     // Revalidate the cached ownership before attempting approval. Opening and
     // closing the browser may have replaced or expired the old claim.
@@ -520,7 +526,7 @@ async function pendingRuntimeFor(projectId: string): Promise<OfflineExternalEdit
       await runtime.dispose();
       throw error;
     }
-    const current = runtime.currentSessionInfo();
+    const current = pendingBeforeValidation ?? runtime.currentSessionInfo();
     // Do not discard the durable proposal. Release only this stale in-memory
     // connection, then load the same proposal with a fresh ownership claim.
     if (current?.status === 'awaiting_review') {
