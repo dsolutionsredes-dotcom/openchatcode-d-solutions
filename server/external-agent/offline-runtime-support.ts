@@ -17,6 +17,7 @@ import {
   renewProjectEditOwnership,
 } from './project-edit-ownership.ts';
 import { offlineExternalToolSchemas } from './offline-tools.ts';
+import type { ExternalProposalOwner } from '../../src/persist/externalProposalStore.ts';
 
 export const ACTIVE_SESSION_STATUSES: Record<string, true> = {
   drafting: true,
@@ -43,6 +44,7 @@ export interface OfflineRuntimeDependencies {
   persistence?: OfflineEditPersistence;
   isBrowserConnected?: (projectId: string) => boolean;
   executeTool?: typeof executeOfflineTool;
+  proposalOwner?: ExternalProposalOwner;
 }
 
 export interface VersionedOfflineSession {

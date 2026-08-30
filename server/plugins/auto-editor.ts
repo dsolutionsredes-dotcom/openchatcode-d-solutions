@@ -245,7 +245,11 @@ async function runtimeFor(projectId: string): Promise<OfflineExternalEditRuntime
   const current = runtimeByProject.get(projectId);
   if (current) return current;
   activateOfflineAgentRuntimeBackend();
-  const runtime = await OfflineExternalEditRuntime.create(projectId, `${publicOrigin()}/#/editor/${encodeURIComponent(projectId)}`);
+  const runtime = await OfflineExternalEditRuntime.create(
+    projectId,
+    `${publicOrigin()}/#/editor/${encodeURIComponent(projectId)}`,
+    { proposalOwner: 'auto-editor' },
+  );
   runtimeByProject.set(projectId, runtime);
   return runtime;
 }

@@ -20,7 +20,11 @@ import { isExternalGlobalReadTool, isExternalRealTool } from './external-tool-po
 import { isProposalStale, type Proposal } from './proposal';
 import { saveProject } from '../persist/projectStore';
 import { saveAutomaticVersion } from '../persist/versionStore';
-import { saveExternalProposal, type StoredExternalProposal } from '../persist/externalProposalStore';
+import {
+  isActiveAutoEditorProposal,
+  saveExternalProposal,
+  type StoredExternalProposal,
+} from '../persist/externalProposalStore';
 import { formatToolApprovalDetails, type ApprovalDetail } from './approval-details';
 import { redactTextForAgentRuntime } from './runtime-artifact';
 import { effectiveToolInvocationArgs } from './execution-policy';
@@ -59,6 +63,12 @@ export class ExternalBridgeRuntime {
   }
   async hydrate(pending: StoredExternalProposal | null): Promise<void> {
     this.reset();
+    // AUTOEDITOR proposals are approved by their API caller (Telegram/n8n).
+    // The browser may inspect the project, but must not adopt that proposal.
+    if (isActiveAutoEditorProposal(pending)) {
+      this.publish({ proposal: null, stale: false });
+      return;
+    }
     await hydrateStoredExternalBridge({
       pending,
       projectId: this.projectId,

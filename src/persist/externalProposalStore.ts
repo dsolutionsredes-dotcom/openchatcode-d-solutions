@@ -12,6 +12,8 @@ import { parseProposal } from './proposalStore';
 import { migrateProjectDoc } from './projectStore';
 import { kvGet, kvSet } from './sharedKv';
 
+export type ExternalProposalOwner = 'external-bridge' | 'auto-editor';
+
 export interface StoredExternalProposal {
   sessionId: string;
   clientName: string;
@@ -22,6 +24,8 @@ export interface StoredExternalProposal {
   operationCount: number;
   appliedOperationCount?: number;
   agentRunId?: string;
+  /** Channel that owns approval for this proposal. Missing means a legacy record. */
+  proposalOwner?: ExternalProposalOwner;
   draftCheckpoint?: ExternalDraftCheckpoint;
   proposal: Proposal | null;
 }
@@ -127,9 +131,19 @@ function parseStoredExternalProposal(raw: unknown): StoredExternalProposal | nul
     appliedOperationCount: typeof value.appliedOperationCount === 'number'
       ? value.appliedOperationCount : undefined,
     agentRunId: typeof value.agentRunId === 'string' ? value.agentRunId : proposal?.agentRunId,
+    proposalOwner: value.proposalOwner === 'auto-editor'
+      ? 'auto-editor'
+      : value.proposalOwner === 'external-bridge' ? 'external-bridge' : undefined,
     draftCheckpoint: checkpoint ?? undefined,
     proposal: status === 'drafting' ? null : proposal,
   };
+}
+
+export function isActiveAutoEditorProposal(
+  proposal: StoredExternalProposal | null | undefined,
+): boolean {
+  return proposal?.proposalOwner === 'auto-editor'
+    && (proposal.status === 'drafting' || proposal.status === 'awaiting_review');
 }
 
 export async function loadExternalProposal(projectId: string): Promise<StoredExternalProposal | null> {

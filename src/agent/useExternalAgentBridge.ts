@@ -10,7 +10,10 @@ import {
 } from './external-edit-session';
 import { ExternalCallCancellationRegistry } from './external-call-cancellation';
 import type { Proposal } from './proposal';
-import { loadExternalProposal } from '../persist/externalProposalStore';
+import {
+  isActiveAutoEditorProposal,
+  loadExternalProposal,
+} from '../persist/externalProposalStore';
 import {
   clearBrowserProjectOwnership,
   browserProjectOwnership,
@@ -287,6 +290,19 @@ async function runBridge(
 ): Promise<void> {
   const { editorInstanceId } = runtime.binding();
   while (!signal.aborted) {
+    try {
+      // Do not claim browser ownership while Telegram/n8n owns a pending
+      // proposal. Once it is resolved, this loop reconnects automatically.
+      if (isActiveAutoEditorProposal(await loadExternalProposal(projectId))) {
+        onError(null);
+        await retryDelay();
+        continue;
+      }
+    } catch (error) {
+      onError(errorMessage(error));
+      await retryDelay();
+      continue;
+    }
     await runBridgeAttempt(projectId, editorInstanceId, runtime, signal, onError);
     if (!signal.aborted) await retryDelay();
   }

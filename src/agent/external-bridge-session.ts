@@ -5,7 +5,10 @@ import {
   revisionOf,
   type ExternalEditSession,
 } from './external-edit-session';
-import type { StoredExternalProposal } from '../persist/externalProposalStore';
+import type {
+  ExternalProposalOwner,
+  StoredExternalProposal,
+} from '../persist/externalProposalStore';
 import type { ProjectDoc } from '../editor/types';
 
 export const EXTERNAL_ACTIVE_STATUSES = new Set<ExternalEditSession['status']>([
@@ -43,6 +46,7 @@ export function storedExternalSession(
     : 'awaiting_review',
   appliedOperationCount?: number,
   agentRunId?: string,
+  proposalOwner?: ExternalProposalOwner,
 ): StoredExternalProposal {
   const drafting = status === 'drafting' && session.status === 'drafting';
   return {
@@ -55,6 +59,7 @@ export function storedExternalSession(
     operationCount: session.operationCount,
     appliedOperationCount,
     agentRunId: agentRunId ?? session.proposal?.agentRunId,
+    proposalOwner,
     draftCheckpoint: drafting ? checkpointExternalEditSession(session) : undefined,
     proposal: drafting ? null : session.proposal,
   };

@@ -70,6 +70,7 @@ export class OfflineExternalEditRuntime {
   private readonly browserConnected: (projectId: string) => boolean;
   private readonly executeTool: typeof executeOfflineTool;
   private readonly durableExternalProposal: boolean;
+  private readonly proposalOwner: 'external-bridge' | 'auto-editor';
   private operationTail: Promise<void> = Promise.resolve();
   private expectedRevision: string;
   private baseDoc: OfflineStoredProject['doc'];
@@ -92,6 +93,7 @@ export class OfflineExternalEditRuntime {
     this.browserConnected = dependencies.isBrowserConnected ?? isProjectConnected;
     this.executeTool = dependencies.executeTool ?? executeOfflineTool;
     this.durableExternalProposal = dependencies.persistence === undefined;
+    this.proposalOwner = dependencies.proposalOwner ?? 'external-bridge';
   }
 
   static async create(
@@ -217,6 +219,14 @@ export class OfflineExternalEditRuntime {
       .find(({ session }) => ACTIVE_SESSION_STATUSES[session.status] === true);
     if (active) throw new Error(`Resolve or discard active edit session ${active.session.id} first.`);
     const stored = this.durableExternalProposal ? await loadExternalProposal(this.projectId) : null;
+    if ((stored?.status === 'drafting' || stored?.status === 'awaiting_review')
+      && stored.proposalOwner
+      && stored.proposalOwner !== this.proposalOwner) {
+      throw new ExternalEditorCallError(
+        'rejected',
+        `The pending proposal belongs to ${stored.proposalOwner} and must be resolved there.`,
+      );
+    }
     if (stored?.status === 'awaiting_review'
       && stored.baseRevision === this.expectedRevision
       && stored.proposal) {
@@ -590,6 +600,7 @@ export class OfflineExternalEditRuntime {
       status,
       appliedOperationCount,
       runId,
+      this.proposalOwner,
     ));
   }
 }
