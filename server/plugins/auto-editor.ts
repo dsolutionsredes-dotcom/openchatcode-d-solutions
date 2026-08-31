@@ -243,7 +243,23 @@ function internalOrigin(): string {
 
 async function runtimeFor(projectId: string): Promise<OfflineExternalEditRuntime> {
   const current = runtimeByProject.get(projectId);
-  if (current) return current;
+  if (current) {
+    // A runtime can outlive the browser handoff or an interrupted Telegram
+    // turn. Validate it before reusing it so an orphaned offline session does
+    // not keep the project locked to an obsolete revision. This is safe here:
+    // the runtime is only reused to start a new turn; a durable proposal is
+    // recovered separately by pendingRuntimeFor when its revision is still
+    // valid. Never rebase a draft that contains operations over a newer
+    // project; release it and claim the current project instead.
+    try {
+      await current.validateAvailability();
+      return current;
+    } catch (error) {
+      if (!isStaleOfflineRevision(error)) throw error;
+      if (runtimeByProject.get(projectId) === current) runtimeByProject.delete(projectId);
+      await current.dispose().catch(() => undefined);
+    }
+  }
   activateOfflineAgentRuntimeBackend();
   const runtime = await OfflineExternalEditRuntime.create(
     projectId,
