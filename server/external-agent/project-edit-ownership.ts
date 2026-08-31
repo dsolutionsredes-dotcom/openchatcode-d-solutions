@@ -139,6 +139,7 @@ export async function claimOfflineProjectOwnership(
 export async function renewProjectEditOwnership(
   claim: ProjectEditOwnershipClaim,
   _baseRevision = claim.baseRevision,
+  allowSafeRebase = false,
 ): Promise<OwnershipRenewResult> {
   return withSerializedProjectStore(async (store) => {
     const ownership = await store.readEntry(projectEditOwnershipKey(claim.projectId));
@@ -150,7 +151,15 @@ export async function renewProjectEditOwnership(
       || current.epoch !== claim.epoch
       || current.leaseExpiresAt <= Date.now()) return { status: 'stale' };
     const project = await storedProject(store, claim.projectId);
-    if (!project || current.baseRevision !== project.revision) return { status: 'stale' };
+    if (!project) return { status: 'stale' };
+
+    // A project can receive a benign server-side normalization immediately after
+    // an offline lease is claimed. Before an edit has made any draft operations,
+    // it is safe to adopt that newest document. Once operations exist, retain the
+    // strict revision fence so a real concurrent edit is never overwritten.
+    if (current.baseRevision !== project.revision && !allowSafeRebase) {
+      return { status: 'stale' };
+    }
     const renewed = { ...claim, baseRevision: project.revision };
     await store.writeEntry(
       projectEditOwnershipKey(claim.projectId),

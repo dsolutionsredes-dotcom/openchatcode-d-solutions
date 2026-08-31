@@ -199,7 +199,16 @@ export class OfflineExternalEditRuntime {
         `Project ${this.projectId} is now open in a browser editor. Start a new MCP session and use ${this.editorUrl}.`,
       );
     }
-    const renewed = await this.persistence.renewOwnership(this.ownership, this.expectedRevision);
+    // Rebase only before any draft operation exists. This absorbs harmless
+    // server-side normalization while preserving the normal conflict protection
+    // after the agent has started changing the project.
+    const canSafelyRebase = [...this.sessions.values()]
+      .every(({ session }) => session.operationCount === 0);
+    const renewed = await this.persistence.renewOwnership(
+      this.ownership,
+      this.expectedRevision,
+      canSafelyRebase,
+    );
     if (renewed.status !== 'renewed') {
       this.failActiveSessions('stale');
       throw new ExternalEditorCallError(
@@ -209,6 +218,7 @@ export class OfflineExternalEditRuntime {
     }
     this.ownership = renewed.claim;
     this.baseDoc = renewed.doc;
+    this.expectedRevision = renewed.claim.baseRevision;
   }
 
   private async begin(
