@@ -166,6 +166,81 @@ async function isolateToFile(
   throw lastErr ?? new Error('isolate-voice failed');
 }
 
+export interface ServerVoiceIsolationResult {
+  readonly ok: true;
+  readonly path: string;
+  readonly bytes: number;
+  readonly cached: boolean;
+  readonly strength: number;
+  readonly engine: string;
+  readonly sourceRevision: string;
+  readonly source: string;
+  readonly note?: string;
+}
+
+/**
+ * Server-side voice isolation shared by the HTTP route and headless/API agent.
+ * Keeping the file operation here avoids a relative fetch, which only works in
+ * the browser and previously made isolate_voice unavailable to offline turns.
+ */
+export async function isolateVoiceOnServer(
+  src: string,
+  strengthInput = 70,
+  options?: { readonly force?: boolean; readonly sourceRevision?: string },
+): Promise<ServerVoiceIsolationResult> {
+  const name = uploadNameFromSrc(src);
+  if (!name) throw new Error('src must be /media/uploads/<safe-name>');
+  const inputPath = resolveUploadFile(name);
+  if (!inputPath) throw new Error(`media not found: ${name}`);
+
+  const strength = Number.isFinite(Number(strengthInput))
+    ? Math.max(0, Math.min(100, Number(strengthInput)))
+    : 70;
+  const sourceInfo = await stat(inputPath);
+  const sourceRevision = typeof options?.sourceRevision === 'string' && options.sourceRevision.trim()
+    ? options.sourceRevision.trim()
+    : `legacy-${sourceInfo.size}-${Math.round(sourceInfo.mtimeMs)}`;
+  const outName = voiceIsolationArtifactName(
+    name,
+    sourceRevision,
+    strength,
+    options?.force ? randomUUID() : undefined,
+  );
+  const finalPath = join(uploadDir(), outName);
+
+  if (!options?.force && existsSync(finalPath)) {
+    try {
+      const info = await stat(finalPath);
+      if (info.isFile() && info.size > 0) {
+        return {
+          ok: true,
+          path: `/media/uploads/${outName}`,
+          bytes: info.size,
+          cached: true,
+          strength,
+          engine: VOICE_ISOLATION_ENGINE_VERSION,
+          sourceRevision,
+          source: src,
+        };
+      }
+    } catch { /* re-run */ }
+  }
+
+  const bytes = await isolateToFile(inputPath, finalPath, 100);
+  if (bytes <= 0) throw new Error('isolated audio is empty (source may have no audio track)');
+  return {
+    ok: true,
+    path: `/media/uploads/${outName}`,
+    bytes,
+    cached: false,
+    strength,
+    engine: VOICE_ISOLATION_ENGINE_VERSION,
+    sourceRevision,
+    source: src,
+    note: 'Immutable full-wet ffmpeg isolation artifact. Playback applies strength as a dry/wet mix; master src is unchanged.',
+  };
+}
+
 export function isolateVoicePlugin(): Plugin {
   return {
     name: 'openchatcut-isolate-voice',
@@ -183,76 +258,22 @@ export function isolateVoicePlugin(): Plugin {
             sourceRevision?: string;
           };
           const src = String(body.src ?? '').trim();
-          const name = uploadNameFromSrc(src);
-          if (!name) {
-            sendJson(res, 400, { error: 'src must be /media/uploads/<safe-name>' });
-            return;
-          }
-          const inputPath = resolveUploadFile(name);
-          if (!inputPath) {
-            sendJson(res, 404, { error: `media not found: ${name}` });
-            return;
-          }
-
-          const strength = Number.isFinite(Number(body.strength))
-            ? Math.max(0, Math.min(100, Number(body.strength)))
-            : 70;
-          const sourceInfo = await stat(inputPath);
-          const sourceRevision = typeof body.sourceRevision === 'string' && body.sourceRevision.trim()
-            ? body.sourceRevision.trim()
-            : `legacy-${sourceInfo.size}-${Math.round(sourceInfo.mtimeMs)}`;
-          const outName = voiceIsolationArtifactName(
-            name,
-            sourceRevision,
-            strength,
-            body.force ? randomUUID() : undefined,
-          );
-          const finalPath = join(uploadDir(), outName);
-
-          if (!body.force && existsSync(finalPath)) {
-            try {
-              const info = await stat(finalPath);
-              if (info.isFile() && info.size > 0) {
-                sendJson(res, 200, {
-                  ok: true,
-                  path: `/media/uploads/${outName}`,
-                  bytes: info.size,
-                  cached: true,
-                  strength,
-                  engine: VOICE_ISOLATION_ENGINE_VERSION,
-                  sourceRevision,
-                  source: src,
-                });
-                return;
-              }
-            } catch { /* re-run */ }
-          }
-
-          const bytes = await isolateToFile(inputPath, finalPath, 100);
-          if (bytes <= 0) {
-            sendJson(res, 422, { error: 'isolated audio is empty (source may have no audio track)' });
-            return;
-          }
-          server.config.logger.info(
-            `[isolate-voice] ${name} → ${basename(finalPath)} (${bytes} bytes, strength=${strength})`,
-          );
-          sendJson(res, 200, {
-            ok: true,
-            path: `/media/uploads/${outName}`,
-            bytes,
-            cached: false,
-            strength,
-            engine: VOICE_ISOLATION_ENGINE_VERSION,
-            sourceRevision,
-            note: 'Immutable full-wet ffmpeg isolation artifact. Playback applies strength as a dry/wet mix; master src is unchanged.',
-            source: src,
+          const result = await isolateVoiceOnServer(src, Number(body.strength ?? 70), {
+            force: body.force,
+            sourceRevision: body.sourceRevision,
           });
+          server.config.logger.info(
+            `[isolate-voice] ${basename(src)} → ${basename(result.path)} (${result.bytes} bytes, strength=${result.strength})`,
+          );
+          sendJson(res, 200, result);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           server.config.logger.error(`[isolate-voice] ${message}`);
-          const status = /ENOENT|spawn ffmpeg/i.test(message) ? 503
-            : /no audio|empty|exit/i.test(message) ? 422
-              : 500;
+          const status = /src must be/i.test(message) ? 400
+            : /media not found/i.test(message) ? 404
+              : /ENOENT|spawn ffmpeg/i.test(message) ? 503
+                : /no audio|empty|exit/i.test(message) ? 422
+                  : 500;
           sendJson(res, status, { error: message });
         }
       });

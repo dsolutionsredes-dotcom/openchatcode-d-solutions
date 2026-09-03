@@ -18,6 +18,7 @@ import { UPLOAD_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/upload-tools.
 import { LIBRARY_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/library-tools.js';
 import { EDIT_ITEM_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/edit-item-tools.js';
 import { MEDIA_POOL_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/media-pool-tools.js';
+import { ISOLATE_VOICE_TOOL_SCHEMAS } from '../../src/agent/tools/schemas/isolate-voice-tools.js';
 
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   begin_edit_session: 'Start an offline server draft. Manual mode creates a durable pending proposal; auto mode applies at review.',
@@ -28,6 +29,7 @@ const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   finalize_uploaded_asset: 'Finalize a verified official upload receipt into the current project media pool.',
   browse_library: 'Browse the current OpenChatCut metadata catalog without loading WebGL shaders.',
   edit_item: 'Validate and apply catalog-backed data-only timeline edits in the offline draft.',
+  isolate_voice: 'Apply, attach, or clear non-destructive voice isolation on a video/audio timeline clip in the offline draft.',
 };
 
 const OFFLINE_SCHEMA_GROUPS = [
@@ -45,6 +47,7 @@ const OFFLINE_SCHEMA_GROUPS = [
   LIBRARY_TOOL_SCHEMAS,
   EDIT_ITEM_TOOL_SCHEMAS,
   MEDIA_POOL_TOOL_SCHEMAS,
+  ISOLATE_VOICE_TOOL_SCHEMAS,
 ] as const;
 
 function serverDirectSchemas(): ExternalRegisteredTool[] {

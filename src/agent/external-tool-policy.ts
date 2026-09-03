@@ -19,6 +19,7 @@ const DRAFT_EDIT_TOOL_NAMES = new Set([
   'manage_markers', 'apply_caption_avoidance', 'place_graphics_in_safe_zone', 'auto_reframe',
   'manage_design_style',
   'manage_media_pool',
+  'isolate_voice',
 ]);
 
 const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
@@ -51,6 +52,7 @@ const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
   manage_markers: true,
   manage_media_pool: true,
   finalize_uploaded_asset: true,
+  isolate_voice: true,
 };
 
 const SERVER_DIRECT_BROWSER_ACTIONS: Record<string, true> = {

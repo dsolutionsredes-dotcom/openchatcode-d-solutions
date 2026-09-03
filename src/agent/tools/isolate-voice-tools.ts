@@ -7,6 +7,8 @@ import { captureTimelineItemSource, validateTimelineItemSourceResult } from '../
 
 type Args = Record<string, unknown>;
 
+export type IsolateVoiceRunner = typeof isolateVoiceOnSrc;
+
 function findItem(items: TimelineItem[], id: unknown): TimelineItem | null {
   const q = String(id ?? '');
   if (!q) return null;
@@ -35,6 +37,15 @@ export async function execIsolateVoiceTool(
   name: string,
   args: Args,
   ctx: AgentContext,
+): Promise<unknown> {
+  return execIsolateVoiceToolWithRunner(name, args, ctx, isolateVoiceOnSrc);
+}
+
+export async function execIsolateVoiceToolWithRunner(
+  name: string,
+  args: Args,
+  ctx: AgentContext,
+  isolateVoice: IsolateVoiceRunner,
 ): Promise<unknown> {
   if (name !== 'isolate_voice') return { error: `unknown tool ${name}` };
 
@@ -128,7 +139,7 @@ export async function execIsolateVoiceTool(
 
   const sourceSnapshot = captureTimelineItemSource(item, ctx.getDoc().assets ?? []);
   try {
-    const r = await isolateVoiceOnSrc(src, strength, {
+    const r = await isolateVoice(src, strength, {
       force: args.force === true,
       sourceRevision: sourceSnapshot.sourceRevision,
     });

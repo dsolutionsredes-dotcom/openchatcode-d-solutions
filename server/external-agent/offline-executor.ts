@@ -21,12 +21,40 @@ import { execFinalizeUpload } from '../../src/agent/tools/upload-finalize.js';
 import { execLibraryTool } from '../../src/agent/tools/library-tools.js';
 import { execEditItemTool } from '../../src/agent/tools/edit-item-tools.js';
 import { execMediaPoolTool } from '../../src/agent/tools/media-pool-tools.js';
+import { execIsolateVoiceToolWithRunner } from '../../src/agent/tools/isolate-voice-tools.js';
+import { isolateVoiceOnServer } from '../plugins/isolate-voice.ts';
 import { normalizeUploadedMedia } from '../plugins/normalize-media.ts';
 import { processUploadReceiptAction } from './upload-receipt-action.ts';
 
 type Args = Record<string, unknown>;
 
 const CLOUD_PROVIDERS = new Set(['assemblyai', 'openai', 'mistral', 'deepgram', 'groq', 'elevenlabs', 'cartesia']);
+
+/**
+ * Introspectable execution inventory. Catalog verification uses this to stop a
+ * tool from being advertised to API agents without a server implementation.
+ */
+export const OFFLINE_EXECUTABLE_TOOL_NAMES = new Set([
+  ...CORE_DATA_TOOL_NAMES,
+  'read_agent_artifact',
+  'finalize_uploaded_asset',
+  'manage_timelines',
+  'edit_track',
+  'read_script',
+  'apply_script',
+  'read_captions',
+  'edit_captions',
+  'update_watermark',
+  'manage_markers',
+  'read_project',
+  'read_transcript',
+  'find_transcript',
+  'transcribe_track',
+  'browse_library',
+  'edit_item',
+  'manage_media_pool',
+  'isolate_voice',
+]);
 
 async function execHeadlessTranscription(args: Args, ctx: AgentContext): Promise<unknown> {
   const state = ctx.getState();
@@ -107,5 +135,13 @@ export async function executeOfflineTool(
   if (name === 'browse_library') return execLibraryTool(name, args, ctx);
   if (name === 'edit_item') return execEditItemTool(name, args, ctx);
   if (name === 'manage_media_pool') return execMediaPoolTool(name, args, ctx);
+  if (name === 'isolate_voice') {
+    return execIsolateVoiceToolWithRunner(
+      name,
+      args,
+      ctx,
+      (src, strength, options) => isolateVoiceOnServer(src, strength, options),
+    );
+  }
   return { error: `offline tool ${name} is not implemented` };
 }

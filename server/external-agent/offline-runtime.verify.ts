@@ -3,7 +3,7 @@ import { isExternalServerDirectCall } from '../../src/agent/external-tool-policy
 import { ExternalEditorCallError } from './broker.ts';
 import { OfflineExternalEditRuntime } from './offline-runtime.ts';
 import { offlineExternalToolSchemas } from './offline-tools.ts';
-import { executeOfflineTool } from './offline-executor.ts';
+import { executeOfflineTool, OFFLINE_EXECUTABLE_TOOL_NAMES } from './offline-executor.ts';
 import type { ProjectEditOwnershipClaim } from './project-edit-ownership.ts';
 import {
   editorUrl,
@@ -16,8 +16,23 @@ import { verifyOfflineCommitAndProjectionScenarios } from './offline-runtime-saf
 
 
 const toolNames = new Set(offlineExternalToolSchemas().map((schema) => schema.name));
+const lifecycleNames = new Set([
+  'begin_edit_session', 'get_edit_session', 'review_edit_session',
+  'discard_edit_session', 'approve_edit_session', 'reject_edit_session',
+]);
 
-for (const allowed of ['begin_edit_session', 'approve_edit_session', 'reject_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'browse_library', 'edit_item', 'set_aspect_ratio', 'edit_captions', 'update_watermark', 'manage_media_pool']) {
+for (const name of toolNames) {
+  assert.equal(
+    lifecycleNames.has(name) || OFFLINE_EXECUTABLE_TOOL_NAMES.has(name),
+    true,
+    `${name} must have a server executor before the API advertises it`,
+  );
+}
+for (const name of OFFLINE_EXECUTABLE_TOOL_NAMES) {
+  assert.equal(toolNames.has(name), true, `${name} server executor must be advertised to API agents`);
+}
+
+for (const allowed of ['begin_edit_session', 'approve_edit_session', 'reject_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'browse_library', 'edit_item', 'set_aspect_ratio', 'edit_captions', 'update_watermark', 'manage_media_pool', 'isolate_voice']) {
   assert.equal(toolNames.has(allowed), true, `${allowed} is server-direct`);
 }
 for (const excluded of ['manage_effects', 'view_timeline_frames', 'submit_image', 'import_media', 'download_media', 'manage_versions', 'submit_render_job']) {
