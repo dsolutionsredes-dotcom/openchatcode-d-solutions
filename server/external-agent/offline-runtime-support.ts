@@ -45,6 +45,8 @@ export interface OfflineRuntimeDependencies {
   isBrowserConnected?: (projectId: string) => boolean;
   executeTool?: typeof executeOfflineTool;
   proposalOwner?: ExternalProposalOwner;
+  /** Test override; production renews a live offline editing lease every 30 seconds. */
+  ownershipHeartbeatMs?: number;
 }
 
 export interface VersionedOfflineSession {

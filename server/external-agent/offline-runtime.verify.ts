@@ -4,6 +4,7 @@ import { ExternalEditorCallError } from './broker.ts';
 import { OfflineExternalEditRuntime } from './offline-runtime.ts';
 import { offlineExternalToolSchemas } from './offline-tools.ts';
 import { executeOfflineTool } from './offline-executor.ts';
+import type { ProjectEditOwnershipClaim } from './project-edit-ownership.ts';
 import {
   editorUrl,
   editSessionId,
@@ -209,6 +210,49 @@ await assert.rejects(
 );
 assert.equal(staleStore.commitCount, 0);
 assert.equal(staleStore.current.timelines[0].width, 1280);
+
+class ExpiringLeasePersistence extends MemoryPersistence {
+  renewCount = 0;
+  private leaseUntil = 0;
+
+  override async claimProject(id: string, ownerId: string) {
+    const claimed = await super.claimProject(id, ownerId);
+    if (claimed.status === 'claimed') this.leaseUntil = Date.now() + 100;
+    return claimed;
+  }
+
+  override async renewOwnership(claim: ProjectEditOwnershipClaim, baseRevision = claim.baseRevision) {
+    if (Date.now() >= this.leaseUntil) return { status: 'stale' as const };
+    const renewed = await super.renewOwnership(claim, baseRevision);
+    if (renewed.status === 'renewed') {
+      this.renewCount += 1;
+      this.leaseUntil = Date.now() + 100;
+    }
+    return renewed;
+  }
+}
+
+const longToolStore = new ExpiringLeasePersistence(projectDoc());
+const longToolRuntime = await OfflineExternalEditRuntime.create(projectId, editorUrl, {
+  persistence: longToolStore,
+  isBrowserConnected: () => false,
+  ownershipHeartbeatMs: 20,
+  executeTool: async (name, args, context) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return executeOfflineTool(name, args, context);
+  },
+});
+const longToolId = editSessionId(await longToolRuntime.execute('begin_edit_session', {
+  approvalMode: 'manual',
+}));
+await longToolRuntime.execute('set_aspect_ratio', {
+  editSessionId: longToolId,
+  ratio: '9:16',
+});
+assert(longToolStore.renewCount >= 2, 'slow editor tools keep the ownership lease alive');
+const longToolSession = await longToolRuntime.execute('get_edit_session', { editSessionId: longToolId });
+assert.equal(longToolSession.operationCount, 1, 'slow mutation is captured after heartbeat renewals');
+await longToolRuntime.dispose();
 
 let browserConnected = false;
 const takeoverStore = new MemoryPersistence(projectDoc());

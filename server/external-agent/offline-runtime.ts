@@ -71,6 +71,7 @@ export class OfflineExternalEditRuntime {
   private readonly executeTool: typeof executeOfflineTool;
   private readonly durableExternalProposal: boolean;
   private readonly proposalOwner: 'external-bridge' | 'auto-editor';
+  private readonly ownershipHeartbeatMs: number;
   private operationTail: Promise<void> = Promise.resolve();
   private expectedRevision: string;
   private baseDoc: OfflineStoredProject['doc'];
@@ -94,6 +95,7 @@ export class OfflineExternalEditRuntime {
     this.executeTool = dependencies.executeTool ?? executeOfflineTool;
     this.durableExternalProposal = dependencies.persistence === undefined;
     this.proposalOwner = dependencies.proposalOwner ?? 'external-bridge';
+    this.ownershipHeartbeatMs = dependencies.ownershipHeartbeatMs ?? 30_000;
   }
 
   static async create(
@@ -306,10 +308,44 @@ export class OfflineExternalEditRuntime {
     const candidate = forkExternalEditSession(session);
     let result: unknown;
     let started = false;
+    let heartbeatStopped = false;
+    let heartbeatFailure: ExternalEditorCallError | null = null;
+    let renewalChain: Promise<void> = Promise.resolve();
+    const renewOwnership = () => {
+      renewalChain = renewalChain.then(async () => {
+        if (heartbeatStopped || heartbeatFailure) return;
+        // The candidate was forked from the current revision, so a changed
+        // document must still fail. This heartbeat only extends our existing
+        // ownership while a slow tool (FFmpeg, transcription, AI, etc.) runs.
+        const renewed = await this.persistence.renewOwnership(
+          this.ownership,
+          this.expectedRevision,
+          false,
+        );
+        if (renewed.status !== 'renewed') {
+          heartbeatFailure = new ExternalEditorCallError(
+            'stale',
+            `Stored project ${this.projectId} changed ownership or revision during the offline edit. Start a new MCP session.`,
+          );
+          return;
+        }
+        this.ownership = renewed.claim;
+      }).catch((error: unknown) => {
+        heartbeatFailure = error instanceof ExternalEditorCallError
+          ? error
+          : new ExternalEditorCallError('failed', error instanceof Error ? error.message : String(error));
+      });
+    };
+    const ownershipHeartbeat = setInterval(renewOwnership, this.ownershipHeartbeatMs);
+    ownershipHeartbeat.unref?.();
     try {
       await run.started(invocation);
       started = true;
       result = await this.executeTool(name, args, externalDraftContext(candidate, this.context(candidate)));
+      heartbeatStopped = true;
+      clearInterval(ownershipHeartbeat);
+      await renewalChain;
+      if (heartbeatFailure) throw heartbeatFailure;
       await this.validateAvailabilityLocked();
     } catch (error) {
       await run.captureToolOutcome(
@@ -321,6 +357,10 @@ export class OfflineExternalEditRuntime {
         error instanceof Error ? error.message : String(error),
       ).slice(0, 1_200);
       throw new ExternalEditorCallError('failed', message);
+    } finally {
+      heartbeatStopped = true;
+      clearInterval(ownershipHeartbeat);
+      await renewalChain;
     }
     const failure = externalToolResultFailure(invocation, result);
     if (failure) {
