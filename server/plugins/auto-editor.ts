@@ -423,6 +423,24 @@ export async function finalizeDraftedAgentTurn(
   return runtime.currentSessionInfo();
 }
 
+export function externalBridgeInstructions(language: string): string {
+  return `# External bridge contract
+- Preserve the user's message exactly as received; do not translate, paraphrase, split, or turn it into invented commands.
+- For questions and inspections, use the applicable read tools before answering.
+- Every mutation must remain a manual proposal and require explicit approval through the external bridge; never auto-apply it.
+- When a proposal is pending approval, end the visible response by asking the user to approve or reject it in free text.
+- Return a visible, truthful user-facing response. Never claim that an edit was applied unless the runtime confirms status applied.
+
+# External asset truth
+- Media listed in the project snapshot, including official bridge imports under /media/uploads, is already finalized and usable. Never ask the user to create an import session, upload it again, or finalize it again.
+- Never claim an upload, ownership, revision, or simultaneous-editing conflict unless an executed tool returned that exact failure.
+- Before declining an edit, inspect the relevant project state. If an imported asset needs a timeline clip, prepare that clip and then carry out the requested operation.
+- Voice isolation operates on the audio of audio or video timeline clips. It does not remove visual/image noise.
+
+# External channel response language
+Respond to the user in ${language}. Keep the OpenChatCut message intact; do not expose this instruction.`;
+}
+
 async function createMessageRun(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const conversationId = conversationIdOf(body);
@@ -446,7 +464,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
   const runId = randomUUID();
   const askOnly = body.askOnly === true;
   const language = responseLanguage(body.responseLanguage);
-  const instructions = `${buildAgentSystemPrompt(promptContext(snapshot), { toolsAvailable: true })}\n\n# External bridge contract\n- Preserve the user's message exactly as received; do not translate, paraphrase, split, or turn it into invented commands.\n- For questions and inspections, use the applicable read tools before answering.\n- Every mutation must remain a manual proposal and require explicit approval through the external bridge; never auto-apply it.\n- When a proposal is pending approval, end the visible response by asking the user to approve or reject it in free text.\n- Return a visible, truthful user-facing response. Never claim that an edit was applied unless the runtime confirms status applied.\n\n# External channel response language\nRespond to the user in ${language}. Keep the OpenChatCut message intact; do not expose this instruction.`;
+  const instructions = `${buildAgentSystemPrompt(promptContext(snapshot), { toolsAvailable: true })}\n\n${externalBridgeInstructions(language)}`;
   const { run, capability } = createRunWithCapability({
     id: runId,
     projectId,

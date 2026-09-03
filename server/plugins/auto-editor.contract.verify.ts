@@ -6,6 +6,7 @@ import {
   conversationKeyFor,
   ensureExternalProjectWith,
   externalMessageOf,
+  externalBridgeInstructions,
   finalizeDraftedAgentTurn,
   messageRunOutcome,
   normalizeExternalResponse,
@@ -65,6 +66,11 @@ assert.equal(normalizeExternalResponse({ projectId: 'official-project-3' }, crea
 assert.throws(() => externalMessageOf('  '), /message is required/);
 const literalMessage = '  Hazlo más corto.  ';
 assert.equal(externalMessageOf(literalMessage), literalMessage, 'message reaches OpenChatCut byte-for-byte as supplied');
+
+const bridgeInstructions = externalBridgeInstructions('Spanish');
+assert.match(bridgeInstructions, /official bridge imports under \/media\/uploads, is already finalized and usable/);
+assert.match(bridgeInstructions, /Never claim an upload, ownership, revision, or simultaneous-editing conflict unless an executed tool returned that exact failure/);
+assert.match(bridgeInstructions, /Voice isolation operates on the audio of audio or video timeline clips/);
 
 const emptyTerminal = messageRunOutcome(null, 'completed', '');
 assert.deepEqual(emptyTerminal, {
