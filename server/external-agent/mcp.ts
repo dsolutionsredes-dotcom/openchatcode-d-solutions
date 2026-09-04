@@ -35,6 +35,9 @@ import { MCP_CONTROL_TOOL_NAMES, MCP_CONTROL_TOOLS } from './mcp-controls.ts';
 import { offlineExternalToolSchemas } from './offline-tools.ts';
 import type { OfflineEditorBinding } from './offline-runtime.ts';
 import { createExternalProject, listExternalProjects } from './projects.ts';
+import { createBrowserMessageRun, resolveBrowserProposal } from '../plugins/auto-editor.ts';
+import { browserAgentQueueStatus, enqueueBrowserAgentWork } from './browser-agent-queue.ts';
+import { BrowserAgentRuntime } from './browser-agent-runtime.ts';
 import { registerMcpPrompts } from './mcp-prompts.ts';
 import {
   activateMcpToolExposure,
@@ -122,6 +125,7 @@ function mcpStatus(session: McpSession): Record<string, unknown> {
   return {
     connectedProjectIds: connected,
     editors: editorStatuses(),
+    v6Queues: browserAgentQueueStatus(),
     sessionBinding: session.binding ?? session.offline?.binding() ?? null,
     bindingMode: mode,
     availableToolTier: mode === 'offline' || (!mode && !connected.length) ? 'server-direct' : 'browser',
@@ -167,6 +171,83 @@ async function callControlTool(
   if (name === 'get_editor_url') {
     const projectId = projectForRead(session, args.projectId);
     return { projectId, editorUrl: editorUrl(args, projectId, baseUrl) };
+  }
+  if (name === 'agent_message') {
+    const projectId = requestedProjectId(args.projectId);
+    const message = typeof args.message === 'string' ? args.message : '';
+    if (!projectId) throw new ExternalEditorCallError('rejected', 'projectId is required');
+    if (!message.trim()) throw new ExternalEditorCallError('rejected', 'message is required');
+    // V6 deliberately does not adopt the old offline binding: the browser
+    // runtime checks that this is the only connected editor before the agent
+    // receives any instruction.
+    try {
+      return await enqueueBrowserAgentWork(projectId, () => createBrowserMessageRun(
+        { ...args, projectId, message },
+        `v6-agent:${projectId}`,
+      ));
+    } catch (error) {
+      if (error instanceof ExternalEditorCallError
+        && ['stale', 'cancelled', 'failed'].includes(error.outcome)) {
+        return {
+          ok: false,
+          status: 'needs_reconciliation',
+          action: 'agent_message',
+          message: 'La conexión con el editor se interrumpió o cambió. Se requiere consultar el estado real antes de repetir cualquier edición.',
+          requiresUserInput: false,
+          errorCode: 'EDITOR_RECONCILIATION_REQUIRED',
+          projectId,
+          engine: 'openchatcut',
+        };
+      }
+      throw error;
+    }
+  }
+  if (name === 'resolve_agent_proposal') {
+    const projectId = requestedProjectId(args.projectId);
+    const editSessionId = typeof args.editSessionId === 'string' ? args.editSessionId.trim() : '';
+    const decision = args.decision === 'approve' || args.decision === 'reject' ? args.decision : null;
+    if (!projectId || !editSessionId || !decision) {
+      throw new ExternalEditorCallError('rejected', 'projectId, editSessionId, and decision are required');
+    }
+    try {
+      return await enqueueBrowserAgentWork(projectId, () => resolveBrowserProposal(
+        projectId, editSessionId, decision,
+      ));
+    } catch (error) {
+      if (error instanceof ExternalEditorCallError
+        && ['stale', 'cancelled', 'failed'].includes(error.outcome)) {
+        return {
+          ok: false,
+          status: 'needs_reconciliation',
+          action: `proposal_${decision}`,
+          message: 'No se confirmó el resultado de la aprobación. Primero hay que consultar el estado real del proyecto.',
+          requiresUserInput: false,
+          errorCode: 'EDITOR_RECONCILIATION_REQUIRED',
+          projectId,
+          engine: 'openchatcut',
+        };
+      }
+      throw error;
+    }
+  }
+  if (name === 'reconcile_agent_state') {
+    const projectId = requestedProjectId(args.projectId);
+    if (!projectId) throw new ExternalEditorCallError('rejected', 'projectId is required');
+    return enqueueBrowserAgentWork(projectId, async () => {
+      const runtime = BrowserAgentRuntime.connect(projectId, `v6-agent:${projectId}`);
+      const state = await runtime.execute('read_project', {});
+      return {
+        ok: true,
+        status: 'reconciled',
+        action: 'reconcile_agent_state',
+        message: 'Se leyó el estado real del editor. Ninguna edición fue repetida.',
+        data: { project: state },
+        requiresUserInput: false,
+        errorCode: '',
+        projectId,
+        engine: 'openchatcut',
+      };
+    });
   }
   return undefined;
 }

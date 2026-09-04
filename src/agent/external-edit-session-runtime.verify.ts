@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { makeDraft } from '../editor/store';
+import { activeTimeline } from '../editor/types';
 import { loadAgentRuntimeSidecar } from '../persist/agentRuntimeStore';
 import { ExternalBridgeRuntime } from './external-bridge-runtime';
 import {
@@ -286,6 +287,57 @@ const awaitingInfo = await reviewRuntime.execute(
   runtimeBinding,
 );
 assert.equal(sessionStatus(awaitingInfo), 'awaiting_review');
+
+// Telegram/MCP approval must complete the same browser-held proposal; it must
+// not require the offline editor runtime or a click in the web UI.
+const remoteApprovalLive = makeDraft(base);
+const remoteApprovalRuntime = new ExternalBridgeRuntime(
+  'runtime-project',
+  'runtime-editor',
+  () => ({
+    commands: remoteApprovalLive.commands,
+    getState: remoteApprovalLive.getState,
+    getDoc: remoteApprovalLive.getDoc,
+    getCreativeMode: () => null,
+    templates: [],
+    audio: [],
+    getProjectId: () => 'runtime-project',
+  }),
+  () => undefined,
+);
+const remoteSession = await remoteApprovalRuntime.execute(
+  'begin_edit_session',
+  { approvalMode: 'manual' },
+  runtimeBinding,
+);
+assert(remoteSession && typeof remoteSession === 'object' && 'editSessionId' in remoteSession);
+await remoteApprovalRuntime.execute(
+  'set_aspect_ratio',
+  { editSessionId: remoteSession.editSessionId, ratio: '9:16' },
+  runtimeBinding,
+);
+const priorAnimationFrame = globalThis.requestAnimationFrame;
+globalThis.requestAnimationFrame = (callback) => {
+  queueMicrotask(() => callback(Date.now()));
+  return 1;
+};
+try {
+  await remoteApprovalRuntime.execute(
+    'review_edit_session',
+    { editSessionId: remoteSession.editSessionId, summary: 'Formato vertical preparado.' },
+    runtimeBinding,
+  );
+} finally {
+  globalThis.requestAnimationFrame = priorAnimationFrame;
+}
+const remotelyApproved = await remoteApprovalRuntime.execute(
+  'approve_edit_session',
+  { editSessionId: remoteSession.editSessionId },
+  runtimeBinding,
+);
+assert.equal(sessionStatus(remotelyApproved), 'applied');
+assert.equal(activeTimeline(remoteApprovalLive.getDoc()).width, 1080);
+assert.equal(activeTimeline(remoteApprovalLive.getDoc()).height, 1920);
 assert(isExternalDraftTool('set_aspect_ratio'));
 assert(isExternalReadTool('read_project'));
 assert(isExternalReadTool('search_stock_media'));

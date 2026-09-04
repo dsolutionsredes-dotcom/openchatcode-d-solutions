@@ -11,6 +11,8 @@ import { claimOfflineProjectOwnership, releaseProjectEditOwnership, renewProject
 import { commitOfflineStoredProject } from '../external-agent/offline-project-store.ts';
 import { OfflineExternalEditRuntime } from '../external-agent/offline-runtime.ts';
 import { offlineExternalToolSchemas } from '../external-agent/offline-tools.ts';
+import { BrowserAgentRuntime } from '../external-agent/browser-agent-runtime.ts';
+import { externalToolSchemas } from '../../src/agent/external-tool-schemas.ts';
 import { activateOfflineAgentRuntimeBackend } from '../external-agent/agent-runtime-persistence.ts';
 import { externalMcpAuthorized } from '../editor-auth.ts';
 import { getKey, type KeyName } from '../keystore.ts';
@@ -34,6 +36,7 @@ export function conversationKeyFor(projectId: string, conversationId = 'default'
   return `auto-editor-conversation:${projectId}:${conversationId}`;
 }
 const runtimeByProject = new Map<string, OfflineExternalEditRuntime>();
+const browserRuntimeByProject = new Map<string, BrowserAgentRuntime>();
 
 /** A one-shot upload receipt must never be retried through the edit runtime. */
 class DriveImportRetryRequiredError extends Error {
@@ -516,6 +519,114 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
       runtimeByProject.delete(projectId);
       await runtime.dispose().catch(() => undefined);
     }
+  }
+}
+
+/**
+ * V6 editor route: the natural-language message is handled by the same server
+ * agent runtime as the editor chat, but every tool call is relayed to the one
+ * browser editor currently connected through MCP. No offline editing is used.
+ */
+export async function createBrowserMessageRun(
+  body: Record<string, unknown>,
+  ownerId: string,
+): Promise<Record<string, unknown>> {
+  const projectId = projectIdOf(body.projectId);
+  const conversationId = conversationIdOf(body);
+  const message = externalMessageOf(body.message);
+  const runtime = BrowserAgentRuntime.connect(projectId, ownerId);
+  browserRuntimeByProject.set(projectId, runtime);
+  let retainRuntime = false;
+  try {
+    const snapshot = await loadOfflineStoredProject(projectId);
+    if (!snapshot) throw new Error(`Stored project ${projectId} does not exist or is invalid.`);
+    const history = await conversationFor(projectId, conversationId);
+    const messages: ModelMessage[] = [...history, { role: 'user', content: message }];
+    const providerValue = typeof body.provider === 'string' ? body.provider : getKey('LLM_PROVIDER' as KeyName);
+    const provider = normalizeLlmProvider(providerValue);
+    const config = resolveLlmProviderConfig(provider, (name) => getKey(name as KeyName));
+    const model = typeof body.model === 'string' && body.model.trim()
+      ? body.model.trim()
+      : (config.model || defaultModelForProvider(provider));
+    const runId = randomUUID();
+    const askOnly = body.askOnly === true;
+    const language = responseLanguage(body.responseLanguage);
+    const instructions = `${buildAgentSystemPrompt(promptContext(snapshot), { toolsAvailable: true })}\n\n${externalBridgeInstructions(language)}\n\n# V6 live-editor rule\n- This turn is bound to the single OpenChatCut browser editor already open for this project.\n- Do not use an offline fallback. If the editor connection or revision changes, report that reconciliation is needed; never repeat an edit blindly.`;
+    const { run, capability } = createRunWithCapability({
+      id: runId,
+      projectId,
+      backend: 'api',
+      provider,
+      model,
+      askOnly,
+      sessionGeneration: await import('../../src/persist/agentSessionGeneration.ts').then((module) => module.currentAgentSessionGeneration(projectId)),
+      references: [],
+      externalSessionId: `auto-editor-v6:${projectId}:${conversationId}`,
+    });
+    const schemas = externalToolSchemas();
+    const execution: ServerRunInput = {
+      messages,
+      provider,
+      model,
+      openAiApiMode: normalizeOpenAiApiMode(body.openAiApiMode),
+      cacheMode: body.cacheMode === 'long' ? 'long' : 'short',
+      maxOutputTokens: typeof body.maxOutputTokens === 'number' ? body.maxOutputTokens : 4096,
+      origin: publicOrigin(),
+      tools: schemas,
+      instructions,
+      headlessToolExecutor: async (schema, args) => runtime.execute(schema.name, args),
+      headlessToolCatalog: schemas,
+    };
+    await executeRun(run, execution);
+    const text = runMessage(run);
+    const session = await finalizeDraftedAgentTurn(runtime, text);
+    retainRuntime = session?.status === 'awaiting_review';
+    const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
+    if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
+    return {
+      ...outcome,
+      data: {
+        requiresApproval: outcome.status === 'pending_approval',
+        approvalStatus: outcome.status === 'pending_approval' ? 'pending' : outcome.status,
+        ...(session ?? {}),
+        conversationId,
+        engineProjectId: projectId,
+        executionMode: 'browser_mcp',
+      },
+      projectId,
+      runId: run.id,
+      capability,
+      conversationId,
+      engine: 'openchatcut',
+    };
+  } finally {
+    if (!retainRuntime && browserRuntimeByProject.get(projectId) === runtime) {
+      browserRuntimeByProject.delete(projectId);
+    }
+  }
+}
+
+/** Resolve a V6 browser-held proposal from its external approval channel. */
+export async function resolveBrowserProposal(
+  projectId: string,
+  editSessionId: string,
+  decision: 'approve' | 'reject',
+): Promise<Record<string, unknown>> {
+  // The editor, not this process, owns the pending proposal. Recover a relay
+  // after a server restart or a new MCP transport, but only against the same
+  // single connected project and the exact proposal id supplied by Telegram.
+  // The editor tool performs the final id/revision validation; this never
+  // creates a replacement session or replays an edit.
+  const runtime = browserRuntimeByProject.get(projectId)
+    ?? BrowserAgentRuntime.connect(projectId, `v6-agent:${projectId}`);
+  try {
+    const result = await runtime.execute(
+      decision === 'approve' ? 'approve_edit_session' : 'reject_edit_session',
+      { editSessionId },
+    );
+    return record(result);
+  } finally {
+    browserRuntimeByProject.delete(projectId);
   }
 }
 

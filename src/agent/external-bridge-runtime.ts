@@ -145,6 +145,38 @@ export class ExternalBridgeRuntime {
       throwIfExternalCallCancelled(signal);
       return this.info(session);
     }
+    // An external channel (for example Telegram) approves the exact draft
+    // held by this connected editor.  Keep this beside the browser's own
+    // proposal controls so both paths use the same persistence, revision
+    // guard and atomic apply logic.  The server-only runtime has supported
+    // these lifecycle calls already; without this branch a live-editor MCP
+    // session could prepare a proposal but could not complete it remotely.
+    if (name === 'approve_edit_session' || name === 'reject_edit_session') {
+      if (!session) {
+        await this.validateBinding(binding);
+        throw new ExternalEditSessionOutcomeError('rejected', `Unknown edit session ${sessionId}`);
+      }
+      await this.validateTerminalReadBinding(binding, session);
+      throwIfExternalCallCancelled(signal);
+      if (session.status !== 'awaiting_review' || this.proposalSessionId !== session.id) {
+        throw new ExternalEditSessionOutcomeError(
+          'rejected',
+          `Edit session ${session.id} is not awaiting approval.`,
+        );
+      }
+      if (name === 'approve_edit_session') {
+        const count = session.proposal?.options[0]?.operations.length ?? 0;
+        await this.apply(
+          new Set(Array.from({ length: count }, (_, index) => index)),
+          false,
+          false,
+          signal,
+        );
+      } else {
+        await this.reject();
+      }
+      return this.info(this.requireSession(session.id));
+    }
     await this.validateBinding(binding);
     throwIfExternalCallCancelled(signal);
     const requiredSession = session ?? this.requireSession(sessionId);
