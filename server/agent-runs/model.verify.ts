@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { generateText } from 'ai';
-import { createServerLanguageModel } from './model';
+import { createServerLanguageModel, serverProviderOptions } from './model';
+
+assert.deepEqual(
+  serverProviderOptions('ollama', 'chat', 'short'),
+  { ollama: { reasoningEffort: 'low' } },
+  'server-side Ollama agents use bounded reasoning without disabling tool use',
+);
 
 let originHeader: string | undefined;
 let fetchSiteHeader: string | undefined;

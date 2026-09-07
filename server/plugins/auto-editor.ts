@@ -569,6 +569,7 @@ export async function createBrowserMessageRun(
     // editor capability instead of paying to send the whole catalog every turn.
     const fullSchemas = externalToolSchemas();
     const schemas = new ToolActivation(fullSchemas, messages).schemas();
+    const startedAt = Date.now();
     // Keep the V6 path observable in the server log. This is deliberately
     // metadata-only: it lets us distinguish the selected provider/model and
     // tool activation from an older web-chat request without logging user text
@@ -611,11 +612,24 @@ export async function createBrowserMessageRun(
     const session = await finalizeDraftedAgentTurn(runtime, text);
     retainRuntime = session?.status === 'awaiting_review';
     const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
+    const eventCount = (type: string): number => run.events.filter((event) => event.type === type).length;
+    const eventCharacterCount = (type: string): number => run.events
+      .filter((event) => event.type === type && event.data && typeof event.data === 'object')
+      .reduce((total, event) => {
+        const value = (event.data as Record<string, unknown>).text;
+        return total + (typeof value === 'string' ? value.length : 0);
+      }, 0);
     console.info('[auto-editor:v6] agent run finished', {
       runId,
       projectId,
       provider,
       model,
+      elapsedMs: Date.now() - startedAt,
+      turnCount: eventCount('text-start'),
+      toolRequestCount: eventCount('tool-request'),
+      toolResultCount: eventCount('tool-result'),
+      thinkingCharacterCount: eventCharacterCount('thinking-delta'),
+      visibleCharacterCount: eventCharacterCount('text-delta'),
       status: run.status,
       responseLength: text.length,
       proposalStatus: session?.status ?? null,
