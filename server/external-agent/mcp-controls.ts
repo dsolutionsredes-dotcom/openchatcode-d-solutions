@@ -64,6 +64,8 @@ export const MCP_CONTROL_TOOLS: Tool[] = [
         message: { type: 'string', description: 'Complete user instruction. Preserve it exactly; do not split it into tool calls.' },
         conversationId: { type: 'string', description: 'Stable external conversation id, for example the Telegram chat id plus project id.' },
         responseLanguage: { type: 'string', description: 'Language for the visible response, for example Spanish.' },
+        provider: { type: 'string', description: 'Optional OpenChatCut provider already configured on the server, for example ollama. The caller never sends an API key or provider URL.' },
+        model: { type: 'string', description: 'Optional model available through the configured provider, for example nemotron-3-super.' },
       },
       required: ['projectId', 'message'],
     },

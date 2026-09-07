@@ -13,6 +13,7 @@ import { OfflineExternalEditRuntime } from '../external-agent/offline-runtime.ts
 import { offlineExternalToolSchemas } from '../external-agent/offline-tools.ts';
 import { BrowserAgentRuntime } from '../external-agent/browser-agent-runtime.ts';
 import { externalToolSchemas } from '../../src/agent/external-tool-schemas.ts';
+import { ToolActivation } from '../../src/agent/tool-activation.ts';
 import { activateOfflineAgentRuntimeBackend } from '../external-agent/agent-runtime-persistence.ts';
 import { externalMcpAuthorized } from '../editor-auth.ts';
 import { getKey, type KeyName } from '../keystore.ts';
@@ -563,7 +564,11 @@ export async function createBrowserMessageRun(
       references: [],
       externalSessionId: `auto-editor-v6:${projectId}:${conversationId}`,
     });
-    const schemas = externalToolSchemas();
+    // Mirror the chat's first routing stage without invoking a second provider.
+    // ToolSearch stays available, so a request can safely load an additional
+    // editor capability instead of paying to send the whole catalog every turn.
+    const fullSchemas = externalToolSchemas();
+    const schemas = new ToolActivation(fullSchemas, messages).schemas();
     const execution: ServerRunInput = {
       messages,
       provider,
@@ -573,9 +578,10 @@ export async function createBrowserMessageRun(
       maxOutputTokens: typeof body.maxOutputTokens === 'number' ? body.maxOutputTokens : 4096,
       origin: publicOrigin(),
       tools: schemas,
+      useSemanticToolSelection: false,
       instructions,
       headlessToolExecutor: async (schema, args) => runtime.execute(schema.name, args),
-      headlessToolCatalog: schemas,
+      headlessToolCatalog: fullSchemas,
     };
     await executeRun(run, execution);
     const text = runMessage(run);

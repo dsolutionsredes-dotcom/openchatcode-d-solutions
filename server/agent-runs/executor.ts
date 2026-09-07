@@ -93,6 +93,8 @@ export interface ServerRunInput {
   readonly maxOutputTokens: number;
   readonly origin: string;
   readonly tools: readonly AgentToolSchema[];
+  /** Disable the optional semantic classifier when a caller already selected its tools locally. */
+  readonly useSemanticToolSelection?: boolean;
   readonly instructions?: string;
   /** When present, server-run tools execute through the official server-direct path. */
   readonly headlessToolExecutor?: ActivationState['executeTool'];
@@ -331,7 +333,9 @@ async function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
   const requested = input.headlessToolCatalog
     ? resolveServerRunToolCatalogAgainst(input.tools, canonicalCatalog)
     : resolveServerRunToolCatalog(input.tools, run.askOnly);
-  const semanticToolNames = await resolveServerRunSemanticToolNames(input.tools, input.messages);
+  const semanticToolNames = input.useSemanticToolSelection === false
+    ? []
+    : await resolveServerRunSemanticToolNames(input.tools, input.messages);
   const capabilities = resolveServerRunCapabilities(provider, backend, input.model);
   const maxOutputTokens = resolveServerRunMaxOutputTokens(
     input.maxOutputTokens,
