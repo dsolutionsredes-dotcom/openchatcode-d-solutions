@@ -569,6 +569,18 @@ export async function createBrowserMessageRun(
     // editor capability instead of paying to send the whole catalog every turn.
     const fullSchemas = externalToolSchemas();
     const schemas = new ToolActivation(fullSchemas, messages).schemas();
+    // Keep the V6 path observable in the server log. This is deliberately
+    // metadata-only: it lets us distinguish the selected provider/model and
+    // tool activation from an older web-chat request without logging user text
+    // or any provider credential.
+    console.info('[auto-editor:v6] agent run started', {
+      runId,
+      projectId,
+      provider,
+      model,
+      initialToolCount: schemas.length,
+      catalogToolCount: fullSchemas.length,
+    });
     const execution: ServerRunInput = {
       messages,
       provider,
@@ -583,11 +595,32 @@ export async function createBrowserMessageRun(
       headlessToolExecutor: async (schema, args) => runtime.execute(schema.name, args),
       headlessToolCatalog: fullSchemas,
     };
-    await executeRun(run, execution);
+    try {
+      await executeRun(run, execution);
+    } catch (error) {
+      console.error('[auto-editor:v6] agent run threw', {
+        runId,
+        projectId,
+        provider,
+        model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     const text = runMessage(run);
     const session = await finalizeDraftedAgentTurn(runtime, text);
     retainRuntime = session?.status === 'awaiting_review';
     const outcome = messageRunOutcome(session, run.status, text, run.error ?? '');
+    console.info('[auto-editor:v6] agent run finished', {
+      runId,
+      projectId,
+      provider,
+      model,
+      status: run.status,
+      responseLength: text.length,
+      proposalStatus: session?.status ?? null,
+      error: run.error ?? null,
+    });
     if (text) await saveConversation(projectId, conversationId, [...messages, { role: 'assistant', content: text }]);
     return {
       ...outcome,
