@@ -69,6 +69,23 @@ assert.equal(settleEditorCall(call.id, 'applied', { fps: 30 }, registrationCapab
 assert.equal(isProjectConnected(projectId, Date.now() + 60_000), false, 'settled calls no longer mask an offline editor');
 assert.deepEqual(await resultPromise, { fps: 30 });
 
+const callerAbort = new AbortController();
+const abortedByCaller = invokeEditorTool(
+  'owner-caller-abort',
+  binding,
+  'read_timeline',
+  {},
+  undefined,
+  callerAbort.signal,
+);
+callerAbort.abort();
+await assert.rejects(abortedByCaller, hasOutcome('cancelled'));
+assert.equal(
+  pendingEditorCallsForTest().length,
+  0,
+  'a disconnected caller removes its editor call instead of leaving background work',
+);
+
 const inFlightPromise = invokeEditorTool('owner-evicted', binding, 'read_timeline', {});
 const inFlight = await nextEditorCall(
   projectId,

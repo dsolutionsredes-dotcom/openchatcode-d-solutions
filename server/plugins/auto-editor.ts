@@ -531,6 +531,7 @@ async function createMessageRun(body: Record<string, unknown>): Promise<Record<s
 export async function createBrowserMessageRun(
   body: Record<string, unknown>,
   ownerId: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<Record<string, unknown>> {
   const projectId = projectIdOf(body.projectId);
   const conversationId = conversationIdOf(body);
@@ -588,13 +589,23 @@ export async function createBrowserMessageRun(
       model,
       openAiApiMode: normalizeOpenAiApiMode(body.openAiApiMode),
       cacheMode: body.cacheMode === 'long' ? 'long' : 'short',
-      maxOutputTokens: typeof body.maxOutputTokens === 'number' ? body.maxOutputTokens : 4096,
+      maxOutputTokens: Math.min(
+        2_048,
+        typeof body.maxOutputTokens === 'number' && body.maxOutputTokens > 0
+          ? Math.trunc(body.maxOutputTokens)
+          : 1_536,
+      ),
       origin: publicOrigin(),
       tools: schemas,
       useSemanticToolSelection: false,
       instructions,
-      headlessToolExecutor: async (schema, args) => runtime.execute(schema.name, args),
+      headlessToolExecutor: async (schema, args, _toolCallId, signal) => (
+        runtime.execute(schema.name, args, signal)
+      ),
       headlessToolCatalog: fullSchemas,
+      signal: options.signal,
+      maxTurns: 6,
+      timeoutMs: 120_000,
     };
     try {
       await executeRun(run, execution);

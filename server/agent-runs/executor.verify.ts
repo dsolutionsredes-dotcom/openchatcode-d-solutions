@@ -294,6 +294,8 @@ assert.equal(turnDisposition(false, true), 'continue');
 assert.equal(turnDisposition(false, false), 'completed');
 assert.equal(turnDisposition(true, true), 'max-tokens', 'output cutoff wins over pending tool calls');
 assert.equal(turnDisposition(true, false), 'max-tokens');
+assert.equal(turnDisposition(false, true, 5, 6), 'continue');
+assert.equal(turnDisposition(false, true, 6, 6), 'max-turns', 'bounded callers cannot loop forever');
 
 console.log('server executor turn-disposition checks passed');
 

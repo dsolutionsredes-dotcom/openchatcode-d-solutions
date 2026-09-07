@@ -141,6 +141,7 @@ async function callControlTool(
   name: string,
   args: Record<string, unknown>,
   baseUrl: string,
+  signal?: AbortSignal,
 ): Promise<unknown | undefined> {
   if (name === 'openchatcut_status') return mcpStatus(session);
   if (name === 'list_projects') {
@@ -184,6 +185,7 @@ async function callControlTool(
       return await enqueueBrowserAgentWork(projectId, () => createBrowserMessageRun(
         { ...args, projectId, message },
         `v6-agent:${projectId}`,
+        { signal },
       ));
     } catch (error) {
       if (error instanceof ExternalEditorCallError
@@ -257,6 +259,7 @@ async function callTool(
   name: string,
   rawArgs: unknown,
   baseUrl: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const args: Record<string, unknown> = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
     ? { ...rawArgs as Record<string, unknown> }
@@ -270,7 +273,7 @@ async function callTool(
   if (session.offline) {
     if (MCP_CONTROL_TOOL_NAMES[name] === true) {
       await validateOfflineBinding(session);
-      return callControlTool(session, name, args, baseUrl);
+      return callControlTool(session, name, args, baseUrl, signal);
     }
     if (!session.id) throw new ExternalEditorCallError('failed', 'MCP session initialization is incomplete.');
     const requested = requestedProjectId(args.editorProjectId);
@@ -287,7 +290,7 @@ async function callTool(
     allowRevisionDrift,
     MCP_CONTROL_TOOL_NAMES[name] !== true && !carriesSession,
   );
-  const control = await callControlTool(session, name, args, baseUrl);
+  const control = await callControlTool(session, name, args, baseUrl, signal);
   if (control !== undefined) return control;
   if (!session.id) throw new ExternalEditorCallError('failed', 'MCP session initialization is incomplete.');
   const binding = bindBrowserForCall(session, args.editorProjectId, allowRevisionDrift);
@@ -351,7 +354,7 @@ function makeServer(baseUrl: string, session: McpSession): Server {
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: currentToolList(session) }));
   registerMcpPrompts(server);
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       ensureMcpToolExposed(session, request.params.name);
       const rawResult = await callTool(
@@ -359,6 +362,7 @@ function makeServer(baseUrl: string, session: McpSession): Server {
         request.params.name,
         request.params.arguments,
         baseUrl,
+        extra.signal,
       );
       const activatedResult = await activateMcpResult(
         session,

@@ -64,15 +64,26 @@ export class BrowserAgentRuntime {
     return this.session ? { ...this.session } : null;
   }
 
-  async execute(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async execute(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     this.refreshBinding(name === 'get_edit_session');
-    const result = await invokeEditorTool(this.ownerId, this.binding, name, args);
+    const result = await invokeEditorTool(this.ownerId, this.binding, name, args, undefined, signal);
     this.observe(name, result);
     // Draft tools mutate only the isolated editor draft. Refresh its status so
     // a model that ends after a tool call can still be turned into one proposal.
     const sessionId = sessionIdOf(args);
     if (sessionId && !['get_edit_session', 'review_edit_session', 'approve_edit_session', 'reject_edit_session', 'discard_edit_session'].includes(name)) {
-      const status = await invokeEditorTool(this.ownerId, this.binding, 'get_edit_session', { editSessionId: sessionId });
+      const status = await invokeEditorTool(
+        this.ownerId,
+        this.binding,
+        'get_edit_session',
+        { editSessionId: sessionId },
+        undefined,
+        signal,
+      );
       this.observe('get_edit_session', status);
     }
     return result;

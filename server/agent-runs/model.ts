@@ -73,12 +73,10 @@ export function serverProviderOptions(
     return { anthropic: { cacheControl } };
   }
   if (provider === 'minimax') return { minimax: { reasoning_split: true } };
-  // Ollama's OpenAI-compatible endpoint defaults reasoning-capable models to
-  // medium effort.  Server-side agent turns can make several model calls
-  // around tool execution, so leaving that implicit multiplies latency for
-  // every read and edit.  Keep reasoning enabled at low effort: tool choice is
-  // preserved, while external/MCP turns do not spend minutes on each pass.
-  if (provider === 'ollama') return { ollama: { reasoningEffort: 'low' } };
+  // Server-side turns already have explicit tools and a system prompt. Hidden
+  // reasoning only multiplies latency around each tool call; disabling it
+  // preserves tool calling and matches the fast non-thinking chat mode.
+  if (provider === 'ollama') return { ollama: { reasoningEffort: 'none' } };
   if (protocolForProvider(provider) === 'openai' && apiMode === 'responses') {
     return { openai: { store: false } };
   }

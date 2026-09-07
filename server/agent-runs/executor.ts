@@ -80,6 +80,7 @@ export interface ActivationState {
     schema: AgentToolSchema,
     args: Record<string, unknown>,
     toolCallId: string,
+    signal?: AbortSignal,
   ) => Promise<unknown>;
 }
 
@@ -100,6 +101,12 @@ export interface ServerRunInput {
   readonly headlessToolExecutor?: ActivationState['executeTool'];
   /** Immutable catalog for an authenticated headless runtime, if it differs from browser tools. */
   readonly headlessToolCatalog?: readonly AgentToolSchema[];
+  /** Optional caller cancellation, used by synchronous MCP requests. */
+  readonly signal?: AbortSignal;
+  /** Optional hard ceiling for model/tool turns. */
+  readonly maxTurns?: number;
+  /** Optional wall-clock deadline for the complete run. */
+  readonly timeoutMs?: number;
 }
 
 type ServerTurnInput = Omit<ServerContextInput, 'schemas'> & {
@@ -113,6 +120,7 @@ export async function executeBrowserTool(
   args: Record<string, unknown>,
   toolCallId: string,
   activation: ActivationState,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const parallel = toolExecutionMode(schema.name) === 'parallel';
   let release: (() => void) | undefined;
@@ -138,7 +146,7 @@ export async function executeBrowserTool(
       argsDigest,
     });
     if (activation.executeTool) {
-      const delivered = await activation.executeTool(schema, args, toolCallId);
+      const delivered = await activation.executeTool(schema, args, toolCallId, signal);
       pushRunEvent(run, 'tool-result', {
         toolCallId,
         name: schema.name,
@@ -179,13 +187,14 @@ function createServerTools(
     inputSchema: jsonSchema<Record<string, unknown>>(
       schema.input_schema as Parameters<typeof jsonSchema<Record<string, unknown>>>[0],
     ),
-    execute: (args: Record<string, unknown>, options: { toolCallId: string }) => (
+    execute: (args: Record<string, unknown>, options: { toolCallId: string; abortSignal?: AbortSignal }) => (
       executeBrowserTool(
         run,
         schema,
         args,
         options.toolCallId,
         activation,
+        options.abortSignal,
       )
     ),
     toModelOutput: ({ output }) => toolResultModelOutput(
@@ -384,9 +393,15 @@ async function createExecutionPlan(run: ServerRun, input: ServerRunInput) {
 }
 
 /** What the loop does after one turn, extracted for deterministic checks. */
-export type TurnDisposition = 'continue' | 'completed' | 'max-tokens';
-export function turnDisposition(hitMaxTokens: boolean, continued: boolean): TurnDisposition {
+export type TurnDisposition = 'continue' | 'completed' | 'max-tokens' | 'max-turns';
+export function turnDisposition(
+  hitMaxTokens: boolean,
+  continued: boolean,
+  turnNumber = 1,
+  maxTurns = Number.POSITIVE_INFINITY,
+): TurnDisposition {
   if (hitMaxTokens) return 'max-tokens';
+  if (continued && turnNumber >= maxTurns) return 'max-turns';
   return continued ? 'continue' : 'completed';
 }
 
@@ -397,9 +412,11 @@ async function executeRunTurns(
 ): Promise<void> {
   const plan = await createExecutionPlan(run, input);
   let messages = plan.prompt.messages;
-  // No turn cap: the model decides when the task is done. The only automatic
-  // stop beside "no more tool calls" is an output-token cutoff, which would
-  // otherwise feed truncated text back into the loop.
+  const maxTurns = Number.isFinite(input.maxTurns)
+    ? Math.max(1, Math.trunc(input.maxTurns!))
+    : Number.POSITIVE_INFINITY;
+  // Existing callers remain unbounded unless they opt into a ceiling. The V6
+  // synchronous MCP bridge supplies one so a model cannot outlive its caller.
   for (let turn = 0; ; turn += 1) {
     const outcome = await runServerTurnWithRetry(run, turn + 1, signal, () =>
       plan.backend === 'codex'
@@ -444,10 +461,19 @@ async function executeRunTurns(
       return;
     }
     messages = outcome.messages;
-    const disposition = turnDisposition(outcome.hitMaxTokens, outcome.continued);
+    const disposition = turnDisposition(
+      outcome.hitMaxTokens,
+      outcome.continued,
+      turn + 1,
+      maxTurns,
+    );
     if (disposition === 'continue') continue;
     if (disposition === 'max-tokens') {
       pushRunEvent(run, 'max-tokens', { turn: turn + 1 });
+    }
+    if (disposition === 'max-turns') {
+      pushRunEvent(run, 'max-turns', { turn: turn + 1, maxTurns });
+      throw new Error(`Agent run exceeded the ${maxTurns}-turn safety limit.`);
     }
     pushRunEvent(run, 'finish', serverRunTextMetadata(outcome.text));
     await setRunStatus(run, 'completed');
@@ -481,13 +507,30 @@ export async function executeRun(
   input: ServerRunInput,
 ): Promise<void> {
   const abort = new AbortController();
+  let deadlineExpired = false;
+  const onCallerAbort = (): void => abort.abort(input.signal?.reason);
+  if (input.signal?.aborted) onCallerAbort();
+  else input.signal?.addEventListener('abort', onCallerAbort, { once: true });
+  const deadline = Number.isFinite(input.timeoutMs) && input.timeoutMs! > 0
+    ? setTimeout(() => {
+      deadlineExpired = true;
+      abort.abort(new Error(`Agent run timed out after ${Math.trunc(input.timeoutMs!)} ms.`));
+    }, Math.trunc(input.timeoutMs!))
+    : undefined;
   run.abort = abort;
   try {
     await setRunStatus(run, 'running');
     await executeRunTurns(run, input, abort.signal);
   } catch (error) {
-    await settleRunFailure(run, abort, error);
+    const failure = deadlineExpired
+      ? new Error(`Agent run timed out after ${Math.trunc(input.timeoutMs!)} ms.`)
+      : input.signal?.aborted
+        ? new Error('Agent run cancelled because the MCP caller disconnected.')
+        : error;
+    await settleRunFailure(run, abort, failure);
   } finally {
+    if (deadline) clearTimeout(deadline);
+    input.signal?.removeEventListener('abort', onCallerAbort);
     if (run.abort === abort) run.abort = undefined;
   }
 }

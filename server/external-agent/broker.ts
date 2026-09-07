@@ -35,6 +35,8 @@ interface QueuedCall {
   resolve: (value: unknown) => void;
   reject: (error: ExternalEditorCallError) => void;
   timer: ReturnType<typeof setTimeout>;
+  abortSignal?: AbortSignal;
+  onAbort?: () => void;
 }
 
 export interface ExternalEditorCall {
@@ -155,6 +157,9 @@ function finishCall(
 ): boolean {
   if (!pending.delete(call.id)) return false;
   clearTimeout(call.timer);
+  if (call.abortSignal && call.onAbort) {
+    call.abortSignal.removeEventListener('abort', call.onAbort);
+  }
   removeQueuedCall(call);
   wake(waiters, call.binding.projectId);
   if (outcome === 'applied') {
@@ -353,6 +358,7 @@ export function invokeEditorTool(
   name: string,
   args: Record<string, unknown>,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const allowRevisionDrift = name === 'get_edit_session';
   const ownsSession = name !== 'begin_edit_session' && 'editSessionId' in args;
@@ -381,11 +387,24 @@ export function invokeEditorTool(
           true,
         );
       }, deadline - Date.now()),
+      abortSignal: signal,
     };
     const queue = queues.get(binding.projectId) ?? [];
     queue.push(call);
     queues.set(binding.projectId, queue);
     pending.set(call.id, call);
+    if (signal) {
+      call.onAbort = () => {
+        finishCall(
+          call,
+          'cancelled',
+          'OpenChatCut tool call cancelled because its caller disconnected or timed out.',
+          true,
+        );
+      };
+      if (signal.aborted) call.onAbort();
+      else signal.addEventListener('abort', call.onAbort, { once: true });
+    }
     wake(waiters, binding.projectId);
   });
 }

@@ -5,8 +5,8 @@ import { createServerLanguageModel, serverProviderOptions } from './model';
 
 assert.deepEqual(
   serverProviderOptions('ollama', 'chat', 'short'),
-  { ollama: { reasoningEffort: 'low' } },
-  'server-side Ollama agents use bounded reasoning without disabling tool use',
+  { ollama: { reasoningEffort: 'none' } },
+  'server-side Ollama agents disable hidden reasoning without disabling tool use',
 );
 
 let originHeader: string | undefined;
